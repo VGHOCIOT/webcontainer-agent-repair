@@ -1,0 +1,30 @@
+:root {
+  --muted: #8a8a8a;
+  color-scheme: light dark;
+  font: 16px/1.45 system-ui, "Segoe UI", Roboto, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+#root {
+  min-height: 100svh;
+}
+
+h1,
+h2 {
+  font-weight: 600;
+}
+
+code {
+  font-family: ui-monospace, Consolas, monospace;
+}
