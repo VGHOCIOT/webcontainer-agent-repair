@@ -22,7 +22,7 @@ export interface RunAgentLoopOptions {
   spec: string;
   maxIterations: number;
   onAttempt: (attempt: Attempt) => void;
-  onPreviewUrl: (url: string | null) => void;
+  onPreviewUrl: (url: string | null, port: number | null) => void;
   signal?: AbortSignal;
 }
 
@@ -167,7 +167,7 @@ export async function runAgentLoop({
 
     attempt = { ...attempt, runLog, status: "validating" };
     onAttempt(attempt);
-    onPreviewUrl(start.url);
+    onPreviewUrl(start.url, start.port);
 
     const validation = await validateApp(webcontainer, start.port!);
     usage.elapsedMs = performance.now() - startedAt;
@@ -191,7 +191,7 @@ export async function runAgentLoop({
 
     start.process.kill();
     previousProcess = null;
-    onPreviewUrl(null);
+    onPreviewUrl(null, null);
 
     messages.push({
       role: "user",

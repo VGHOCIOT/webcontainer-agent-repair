@@ -228,8 +228,31 @@
   border-bottom: 1px solid #333;
 }
 
-.preview__frame {
+.preview__body {
   flex: 1;
-  border: none;
-  background: white;
+  overflow: auto;
+  background: #0d0d0d;
+}
+
+.preview__loading,
+.preview__error {
+  margin: 0.75rem;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  color: var(--muted, #888);
+}
+
+.preview__error {
+  color: #ff8a8a;
+}
+
+.preview__json {
+  margin: 0;
+  padding: 0.75rem;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  color: #ddd;
+  background: #0d0d0d;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
