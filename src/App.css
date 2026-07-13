@@ -108,18 +108,41 @@
   flex: 1;
   display: grid;
   grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr auto;
+  grid-template-areas:
+    "log preview"
+    "stats preview";
   gap: 1.5rem;
   min-height: 0;
 }
 
+.app__log {
+  grid-area: log;
+}
+
+.app__stats {
+  grid-area: stats;
+}
+
+.app__preview {
+  grid-area: preview;
+}
+
 .app__log,
+.app__stats,
 .app__preview {
   display: flex;
   flex-direction: column;
   min-height: 0;
 }
 
+.app__stats {
+  padding-top: 1rem;
+  border-top: 1px solid #333;
+}
+
 .app__log h2,
+.app__stats h2,
 .app__preview h2 {
   font-size: 1rem;
   margin: 0 0 0.5rem;
@@ -186,6 +209,7 @@
   max-height: 300px;
   overflow: auto;
   background: #1c1c1c;
+  color: #ddd;
   border-radius: 6px;
   white-space: pre-wrap;
   word-break: break-word;
@@ -202,6 +226,65 @@
   margin-top: 0.35rem;
   font-size: 0.85rem;
   color: #7cd992;
+}
+
+.run-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.run-stats__header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.run-stats__header h2 {
+  margin: 0;
+}
+
+.run-stats__badge {
+  display: inline-block;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.run-stats__badge--pending {
+  background: rgba(109, 91, 255, 0.15);
+  color: #6d5bff;
+}
+
+.run-stats__badge--success {
+  background: rgba(76, 175, 80, 0.15);
+  color: #4caf50;
+}
+
+.run-stats__badge--failure {
+  background: rgba(255, 107, 107, 0.15);
+  color: #ff6b6b;
+}
+
+.run-stats__failures {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.8rem;
+  font-size: 0.75rem;
+  color: var(--muted, #888);
+  font-family: ui-monospace, monospace;
+}
+
+.run-stats__totals {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--muted, #888);
+  font-family: ui-monospace, monospace;
 }
 
 .preview {
@@ -223,6 +306,7 @@
 .preview__bar {
   padding: 0.4rem 0.6rem;
   background: #1c1c1c;
+  color: #ddd;
   font-family: ui-monospace, monospace;
   font-size: 0.75rem;
   border-bottom: 1px solid #333;
