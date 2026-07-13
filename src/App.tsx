@@ -23,6 +23,7 @@ function App() {
   const [spec, setSpec] = useState(DEFAULT_SPEC);
   const [attempts, setAttempts] = useState<Attempt[]>([]);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewPort, setPreviewPort] = useState<number | null>(null);
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -44,6 +45,7 @@ function App() {
     setRunError(null);
     setAttempts([]);
     setPreviewUrl(null);
+    setPreviewPort(null);
     setRunning(true);
 
     const controller = new AbortController();
@@ -64,7 +66,10 @@ function App() {
             return next;
           });
         },
-        onPreviewUrl: setPreviewUrl,
+        onPreviewUrl: (url, port) => {
+          setPreviewUrl(url);
+          setPreviewPort(port);
+        },
       });
     } catch (err) {
       setRunError((err as Error).message);
@@ -163,7 +168,7 @@ function App() {
         </section>
         <section className="app__preview">
           <h2>Live preview</h2>
-          <PreviewPane url={previewUrl} />
+          <PreviewPane url={previewUrl} port={previewPort} />
         </section>
       </main>
     </div>
