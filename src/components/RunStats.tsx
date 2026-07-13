@@ -61,7 +61,7 @@ export function RunStats({
     );
   }
 
-  const totals = `${stats.totalInputTokens} in / ${stats.totalOutputTokens} out, ${stats.totalElapsedMs} ms elapsed`;
+  const totals = `${(stats.totalElapsedMs/ 1000).toFixed(1)}s · ${stats.totalInputTokens} in / ${stats.totalOutputTokens} out tokens`;
 
   return (
     <div className="run-stats">
