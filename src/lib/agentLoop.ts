@@ -83,6 +83,7 @@ export async function runAgentLoop({
         status: "failed",
         error: "Claude's response contained no file blocks to write.",
         usage,
+        failureStage: "generation",
       };
       onAttempt(attempt);
       attempts.push(attempt);
@@ -119,6 +120,7 @@ export async function runAgentLoop({
         installLog,
         error: `npm install exited with code ${installExitCode}`,
         usage,
+        failureStage: "installation",
       };
       onAttempt(attempt);
       attempts.push(attempt);
@@ -152,6 +154,7 @@ export async function runAgentLoop({
         runLog,
         error: `Server never came up: ${reason}`,
         usage,
+        failureStage: "startup",
       };
       onAttempt(attempt);
       attempts.push(attempt);
@@ -185,6 +188,7 @@ export async function runAgentLoop({
       validation,
       error: validation.details,
       usage,
+      failureStage: "validation",
     };
     onAttempt(attempt);
     attempts.push(attempt);
