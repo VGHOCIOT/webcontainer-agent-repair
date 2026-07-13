@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import "./App.css";
 import { AttemptLog } from "./components/AttemptLog";
 import { PreviewPane } from "./components/PreviewPane";
+import { RunStats } from "./components/RunStats";
 import { DEFAULT_MODEL } from "./lib/anthropic";
 import { runAgentLoop } from "./lib/agentLoop";
 import { DEFAULT_SPEC } from "./lib/spec";
@@ -9,7 +10,7 @@ import type { Attempt } from "./lib/types";
 
 const API_KEY_STORAGE_KEY = "webcontainer-agent-repair:anthropic-api-key";
 const MODELS = ["claude-sonnet-5", "claude-opus-4-8", "claude-haiku-4-5"];
-const MAX_ITERATIONS = 1;
+const MAX_ITERATIONS = 2;
 
 function App() {
   const [apiKey, setApiKey] = useState(
@@ -156,6 +157,9 @@ function App() {
         <section className="app__log">
           <h2>Attempt log</h2>
           <AttemptLog attempts={attempts} />
+        </section>
+        <section className="app__stats">
+          <RunStats running={running} attempts={attempts} />
         </section>
         <section className="app__preview">
           <h2>Live preview</h2>

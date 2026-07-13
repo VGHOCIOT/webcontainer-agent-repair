@@ -26,4 +26,7 @@ export interface Attempt {
   validation?: { pass: boolean; details: string };
   error?: string;
   usage?: AttemptUsage;
+  failureStage?: FailureStage;
 }
+
+export type FailureStage = "generation" | "installation" | "startup" | "validation";
