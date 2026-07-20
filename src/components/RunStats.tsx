@@ -1,5 +1,5 @@
 import type { Attempt } from "../lib/types";
-import { computeRunStats } from "../lib/stats";
+import { computeRunStats, computeHealingTimeline } from "../lib/stats";
 import { Sparklines, SparklinesLine } from "react-sparklines-typescript";
 
 const STAGE_LABEL: Record<string, string> = {
@@ -46,6 +46,7 @@ export function RunStats({
   running: boolean;
 }) {
   const stats = computeRunStats(attempts);
+  const { regressionCount } = computeHealingTimeline(attempts);
 
   // `running` has to come from the parent: stats.converged is false both
   // while a run is still in progress (no "passed" attempt yet) and once it
@@ -70,6 +71,12 @@ export function RunStats({
         {badge}
       </div>
       {failureBreakdown(stats.failuresByStage)}
+      {regressionCount > 0 && (
+        <p className="run-stats__regressions">
+          {regressionCount} check regression{regressionCount === 1 ? "" : "s"}{" "}
+          (a passing check later broke)
+        </p>
+      )}
       {costSparkline(stats.perAttempt)}
       <p className="run-stats__totals">{totals}</p>
     </div>

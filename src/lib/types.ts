@@ -17,16 +17,38 @@ export interface AttemptUsage {
   elapsedMs: number;
 }
 
+export interface CheckResult {
+  name: string;
+  pass: boolean;
+  details: string;
+}
+
+export interface ValidationResult {
+  pass: boolean;
+  details: string;
+  checks: CheckResult[];
+}
+
 export interface Attempt {
   index: number;
   status: AttemptStatus;
   files?: GeneratedFile[];
   installLog?: string;
   runLog?: string;
-  validation?: { pass: boolean; details: string };
+  validation?: ValidationResult;
   error?: string;
   usage?: AttemptUsage;
   failureStage?: FailureStage;
+  // True when this attempt produced no progress vs. the previous one —
+  // byte-identical files, or the exact same failure. Drives the loop's
+  // early-stop guard so a stuck model doesn't burn every iteration.
+  stalled?: boolean;
 }
 
 export type FailureStage = "generation" | "installation" | "startup" | "validation";
+
+export type StoppedReason =
+  | "converged"
+  | "max-iterations"
+  | "no-progress"
+  | "aborted";
