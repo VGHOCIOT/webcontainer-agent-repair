@@ -38,3 +38,27 @@ ${spec}
 
 Output the corrected file(s) in full, using the required file-block format.`;
 }
+
+/**
+ * Used when the loop detects no progress — the last attempt's files were
+ * byte-identical, or it reproduced the exact same failure. A plain retry
+ * prompt tends to reproduce the same output, so this one names the stall
+ * explicitly and demands a materially different approach.
+ */
+export function buildEscalatedRetryPrompt(
+  spec: string,
+  errorReport: string,
+  reason: string,
+): string {
+  return `STOP repeating yourself. ${reason} Simply re-emitting the same code (or the same fix) will not work — you must change your APPROACH, not just retype it. Re-read the error below and reconsider the root cause from scratch.
+
+Here is what actually happened when the last attempt ran:
+
+${errorReport}
+
+Satisfy the original spec:
+
+${spec}
+
+Output the corrected file(s) in full, using the required file-block format.`;
+}

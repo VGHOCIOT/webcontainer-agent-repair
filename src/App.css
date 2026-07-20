@@ -287,6 +287,174 @@
   font-family: ui-monospace, monospace;
 }
 
+.run-stats__regressions {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #ff9800;
+}
+
+/* Validator panel */
+.app__validator {
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 0.8rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.validator__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.validator__header h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.validator__header button {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.3rem 0.9rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.validator__header button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.validator__hint,
+.validator__empty,
+.validator__usage {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--muted, #888);
+}
+
+.validator__usage {
+  font-family: ui-monospace, monospace;
+}
+
+.validator__checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.validator__check-chip {
+  font-family: ui-monospace, monospace;
+  font-size: 0.7rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(109, 91, 255, 0.15);
+  color: #a99dff;
+}
+
+.validator__script summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.validator__script pre {
+  margin: 0.35rem 0 0;
+  padding: 0.5rem;
+  max-height: 320px;
+  overflow: auto;
+  background: #1c1c1c;
+  color: #ddd;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Healing timeline */
+.timeline {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.timeline__header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.timeline__header h3 {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.timeline__regressions {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #ff9800;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(255, 152, 0, 0.15);
+}
+
+.timeline__scroll {
+  overflow-x: auto;
+}
+
+.timeline__grid {
+  border-collapse: collapse;
+  font-size: 0.75rem;
+}
+
+.timeline__grid th,
+.timeline__grid td {
+  padding: 0.2rem 0.4rem;
+  text-align: center;
+}
+
+.timeline__check-head,
+.timeline__check-name {
+  text-align: left;
+  font-family: ui-monospace, monospace;
+  color: var(--muted, #888);
+  white-space: nowrap;
+}
+
+.timeline__attempt-head {
+  color: var(--muted, #888);
+  font-weight: 600;
+}
+
+.timeline__cell {
+  font-weight: 700;
+  border-radius: 4px;
+}
+
+.timeline__cell--pass {
+  color: #4caf50;
+}
+
+.timeline__cell--fail {
+  color: #ff6b6b;
+}
+
+.timeline__cell--absent {
+  color: #555;
+}
+
+.timeline__cell--regression {
+  outline: 2px solid #ff9800;
+  outline-offset: -2px;
+}
+
 .preview {
   flex: 1;
   display: flex;
