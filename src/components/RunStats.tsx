@@ -1,43 +1,10 @@
 import type { Attempt } from "../lib/types";
 import { computeRunStats, computeHealingTimeline } from "../lib/stats";
-import { Sparklines, SparklinesLine } from "react-sparklines-typescript";
 
-const STAGE_LABEL: Record<string, string> = {
-  generation: "Generation",
-  installation: "Install",
-  startup: "Start",
-  validation: "Validation",
-};
-
-// Categorical counts (4 unrelated stages), not a sequence — a labeled list
-// reads correctly here; a sparkline would connect them as if index order meant
-// something and drop the labels that make "which failure class recurs" legible.
-function failureBreakdown(failuresByStage: Record<string, number>) {
-  const entries = Object.entries(failuresByStage).filter(([, count]) => count > 0);
-  if (entries.length === 0) return null;
-  return (
-    <ul className="run-stats__failures">
-      {entries.map(([stage, count]) => (
-        <li key={stage}>
-          {STAGE_LABEL[stage] ?? stage}: {count}
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-// Per-attempt token cost IS a real sequence across attempt index, so a
-// sparkline fits here — trend of "is each retry getting cheaper or pricier."
-function costSparkline(perAttempt: { inputTokens: number; outputTokens: number }[]) {
-  if (perAttempt.length < 2) return null;
-  const totalTokens = perAttempt.map((a) => a.inputTokens + a.outputTokens);
-  return (
-    <Sparklines data={totalTokens} width={100} height={20}>
-      <SparklinesLine color="red" />
-    </Sparklines>
-  );
-}
-
+// A lean per-run header. The per-attempt detail — which checks healed, which
+// stage each attempt died at, and its token/time cost — now lives in the
+// healing timeline (one grid instead of a 2-point sparkline + a stage list that
+// duplicated the batch summary). This card just states the run's verdict.
 export function RunStats({
   attempts,
   running,
@@ -62,7 +29,18 @@ export function RunStats({
     );
   }
 
-  const totals = `${(stats.totalElapsedMs/ 1000).toFixed(1)}s · ${stats.totalInputTokens} in / ${stats.totalOutputTokens} out tokens`;
+  const outcome =
+    !running && attempts.length > 0
+      ? stats.converged
+        ? `Converged in ${stats.iterationsToConvergence} ${
+            stats.iterationsToConvergence === 1 ? "attempt" : "attempts"
+          }`
+        : `Gave up after ${stats.totalAttempts} ${
+            stats.totalAttempts === 1 ? "attempt" : "attempts"
+          }`
+      : null;
+
+  const totals = `${(stats.totalElapsedMs / 1000).toFixed(1)}s · ${stats.totalInputTokens} in / ${stats.totalOutputTokens} out tokens`;
 
   return (
     <div className="run-stats">
@@ -70,15 +48,14 @@ export function RunStats({
         <h2>Run stats</h2>
         {badge}
       </div>
-      {failureBreakdown(stats.failuresByStage)}
+      {outcome && <p className="run-stats__outcome">{outcome}</p>}
       {regressionCount > 0 && (
         <p className="run-stats__regressions">
           {regressionCount} check regression{regressionCount === 1 ? "" : "s"}{" "}
           (a passing check later broke)
         </p>
       )}
-      {costSparkline(stats.perAttempt)}
-      <p className="run-stats__totals">{totals}</p>
+      {attempts.length > 0 && <p className="run-stats__totals">{totals}</p>}
     </div>
   );
 }

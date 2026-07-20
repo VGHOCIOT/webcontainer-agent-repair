@@ -1,16 +1,27 @@
-export const DEFAULT_SPEC = `Build a tiny Node.js HTTP server (no framework, use only the built-in "http" module — do not depend on express or any npm package) that serves a single paginated REST endpoint:
+export const DEFAULT_SPEC = `Build a tiny Node.js HTTP server using only the built-in "http" module (no express or other npm packages) that serves one paginated REST endpoint:
 
 GET /items?page=<n>&limit=<n>
 
-- Backed by an in-memory array of 47 items, each shaped like { id: number, name: string }, seeded on startup (e.g. "Item 1".."Item 47").
-- "page" defaults to 1, "limit" defaults to 10. Both are positive integers; reject (400) anything else.
-- Response JSON shape:
-  { "page": <n>, "limit": <n>, "total": 47, "items": [ ... ] }
-- "items" must contain the correct slice for that page/limit, and must never include items from adjacent pages (no off-by-one).
-- Requesting a page beyond the last page returns an empty "items" array with 200, not an error.
-- The server must listen on process.env.PORT (fall back to 3000 if unset) and log "Server ready" once listening.
+- It returns items from an in-memory list of 47 records, each shaped { id: number, name: string } ("Item 1" through "Item 47"), seeded on startup.
+- "page" defaults to 1 and "limit" defaults to 10. Invalid values for either are a client error.
+- The response body is JSON: { page, limit, total, items }, where "items" holds the records for the requested page.
+- Requesting a page past the end is not an error.
+- Listen on process.env.PORT (or 3000) and log "Server ready" once listening.
 
-Keep it to one file, index.js, plus a minimal package.json with a "start" script that runs "node index.js".`;
+Keep it to one index.js plus a minimal package.json whose "start" script runs "node index.js".`;
+
+// A second preset that renders an actual UI in the preview pane (not just JSON),
+// so the demo shows a recognizable little frontend app healing — while still
+// being HTTP-probeable by a deterministic validator (the served HTML + the JSON
+// API it fetches).
+export const FRONTEND_SPEC = `Build a tiny Node.js HTTP server using only the built-in "http" module (no express or other npm packages) that serves a minimal single-page "task list" app:
+
+- GET / returns an HTML page (Content-Type: text/html) with a heading "Tasks" and an empty <ul id="list">. The page includes a small inline <script> that fetches /api/tasks and renders one <li> per task showing its title; a task whose "done" is true is rendered with a line-through style.
+- GET /api/tasks returns JSON (Content-Type: application/json): an array of about 5 seeded tasks, each shaped { id: number, title: string, done: boolean }, with at least one done and one not done.
+- Anything else returns 404.
+- Listen on process.env.PORT (or 3000) and log "Server ready" once listening.
+
+Keep it to one index.js (you may inline the HTML and client script) plus a minimal package.json whose "start" script runs "node index.js".`;
 
 export const SYSTEM_PROMPT = `You are a backend code generator operating inside an automated write-run-fix loop. You do not talk to the end user directly — your entire response is parsed by a script and written to disk verbatim, so it must contain nothing but file blocks.
 
