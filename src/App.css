@@ -53,6 +53,136 @@
   grid-column: 1 / -1;
 }
 
+.app__hint {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--muted, #888);
+}
+
+.app__probe {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--muted, #888);
+}
+
+.app__probe input {
+  margin-top: 0.15rem;
+}
+
+.app__probe code {
+  font-family: ui-monospace, monospace;
+}
+
+.app__batch-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--muted, #888);
+}
+
+.app__batch-control input {
+  width: 3.5rem;
+  padding: 0.3rem 0.4rem;
+}
+
+.app__batch {
+  margin-top: 1.25rem;
+}
+
+.batch-summary__headline {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.batch-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.batch-stat__value {
+  font-size: 1.4rem;
+  font-weight: 600;
+}
+
+.batch-stat__label {
+  font-size: 0.7rem;
+  color: var(--muted, #888);
+}
+
+.batch-block {
+  margin-bottom: 0.9rem;
+}
+
+.batch-block h4 {
+  margin: 0 0 0.35rem;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted, #888);
+}
+
+.batch-list {
+  margin: 0;
+  padding-left: 1rem;
+  font-size: 0.8rem;
+}
+
+.batch-list code {
+  font-family: ui-monospace, monospace;
+}
+
+.batch-hist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.8rem;
+}
+
+.batch-hist li {
+  display: grid;
+  grid-template-columns: 1.5rem 1fr 1.5rem;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.2rem;
+}
+
+.batch-hist__key {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.batch-hist__bar {
+  background: var(--surface, #2a2a2a);
+  border-radius: 3px;
+  overflow: hidden;
+  height: 0.8rem;
+}
+
+.batch-hist__fill {
+  display: block;
+  height: 100%;
+  background: #4ea1ff;
+}
+
+.batch-hist__count {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted, #888);
+}
+
+.batch-summary__totals {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--muted, #888);
+}
+
 .field--spec textarea {
   font-family: ui-monospace, monospace;
   font-size: 0.8rem;
@@ -455,6 +585,102 @@
   outline-offset: -2px;
 }
 
+.timeline__attempt-head--passed {
+  color: #4caf50;
+}
+
+.timeline__attempt-head--failed {
+  color: #ff6b6b;
+}
+
+.timeline__result-row td,
+.timeline__cost-row td {
+  border-top: 1px solid var(--border, #333);
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--muted, #888);
+}
+
+.timeline__result--passed {
+  color: #4caf50;
+}
+
+.timeline__result--failed {
+  color: #ff6b6b;
+}
+
+.timeline__cost {
+  display: table-cell;
+}
+
+.timeline__cost-tok,
+.timeline__cost-time {
+  display: block;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.timeline__cost-time {
+  color: #555;
+}
+
+.app__viewing {
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: var(--muted, #888);
+}
+
+.spec-presets {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.4rem;
+}
+
+.spec-preset {
+  font-size: 0.75rem;
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--border, #333);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted, #888);
+  cursor: pointer;
+}
+
+.spec-preset--active {
+  border-color: #4ea1ff;
+  color: #4ea1ff;
+}
+
+.app__run-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+}
+
+.run-chip {
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--border, #333);
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.run-chip--pass {
+  color: #4caf50;
+}
+
+.run-chip--fail {
+  color: #ff6b6b;
+}
+
+.run-chip--active {
+  outline: 2px solid #4ea1ff;
+  outline-offset: -1px;
+}
+
 .preview {
   flex: 1;
   display: flex;
@@ -478,6 +704,22 @@
   font-family: ui-monospace, monospace;
   font-size: 0.75rem;
   border-bottom: 1px solid #333;
+}
+
+.preview__url {
+  color: #9ecbff;
+  text-decoration: none;
+}
+
+.preview__url:hover {
+  text-decoration: underline;
+}
+
+.preview__frame {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  background: #fff;
 }
 
 .preview__body {

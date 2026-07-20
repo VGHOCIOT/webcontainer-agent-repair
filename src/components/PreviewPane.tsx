@@ -3,11 +3,12 @@ import { getWebContainer } from "../lib/webcontainer";
 
 const PROBE_SCRIPT_PATH = ".preview-probe.mjs";
 
-function buildProbeScript(port: number): string {
+function buildProbeScript(port: number, path: string): string {
   return `
-const res = await fetch("http://localhost:${port}/items?page=1&limit=5");
+const res = await fetch(${JSON.stringify(`http://localhost:${port}`)} + ${JSON.stringify(path)});
 const body = await res.text();
-console.log(JSON.stringify({ status: res.status, body }));
+const contentType = res.headers.get("content-type") || "";
+console.log(JSON.stringify({ status: res.status, contentType, body }));
 `;
 }
 
@@ -19,16 +20,18 @@ function prettyBody(body: string): string {
   }
 }
 
-// The iframe below points at the WebContainer's public tunnel URL, a
-// different origin than this app, so no CSS here can reach the text it
-// renders. Rather than trust the browser's own (occasionally illegible,
-// e.g. white-on-white in some dark-mode configs) rendering of that
-// cross-origin response, we fetch it ourselves via a script run inside the
-// container — the same loopback-fetch trick validate.ts uses, since a
-// same-page fetch() to the public tunnel URL is known to fail — and render
-// it in our own styled <pre>.
-function usePreviewProbe(port: number | null) {
-  const [result, setResult] = useState<{ status: number; body: string } | null>(null);
+interface ProbeResult {
+  status: number;
+  contentType: string;
+  body: string;
+}
+
+// Probe the derived path from *inside* the container (a same-page fetch to the
+// public tunnel URL is known to fail) via a one-shot script. We use the result
+// both to decide how to render — HTML gets an iframe, anything else is
+// pretty-printed — and, for JSON, as the content itself.
+function usePreviewProbe(port: number | null, path: string) {
+  const [result, setResult] = useState<ProbeResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -40,7 +43,7 @@ function usePreviewProbe(port: number | null) {
     (async () => {
       try {
         const webcontainer = await getWebContainer();
-        await webcontainer.fs.writeFile(PROBE_SCRIPT_PATH, buildProbeScript(port));
+        await webcontainer.fs.writeFile(PROBE_SCRIPT_PATH, buildProbeScript(port, path));
         const process = await webcontainer.spawn("node", [PROBE_SCRIPT_PATH]);
 
         let output = "";
@@ -55,8 +58,7 @@ function usePreviewProbe(port: number | null) {
         if (cancelled) return;
 
         const lastLine = output.trim().split("\n").pop() ?? "";
-        const parsed = JSON.parse(lastLine) as { status: number; body: string };
-        setResult(parsed);
+        setResult(JSON.parse(lastLine) as ProbeResult);
       } catch (err) {
         if (!cancelled) setError((err as Error).message);
       }
@@ -65,19 +67,28 @@ function usePreviewProbe(port: number | null) {
     return () => {
       cancelled = true;
     };
-  }, [port]);
+  }, [port, path]);
 
   return { result, error };
+}
+
+function isHtml(result: ProbeResult): boolean {
+  return (
+    /text\/html/i.test(result.contentType) ||
+    result.body.trimStart().startsWith("<")
+  );
 }
 
 export function PreviewPane({
   url,
   port,
+  path,
 }: {
   url: string | null;
   port: number | null;
+  path: string;
 }) {
-  const { result, error } = usePreviewProbe(port);
+  const { result, error } = usePreviewProbe(port, path);
 
   if (!url) {
     return (
@@ -87,22 +98,36 @@ export function PreviewPane({
     );
   }
 
-  const testUrl = `${url}/items?page=1&limit=5`;
+  const target = `${url}${path}`;
 
   return (
     <div className="preview">
       <div className="preview__bar">
-        <span className="preview__url">{testUrl}</span>
+        <a className="preview__url" href={target} target="_blank" rel="noreferrer">
+          {target}
+        </a>
       </div>
-      <div className="preview__body">
-        {error && <p className="preview__error">Failed to reach server: {error}</p>}
-        {!error && !result && <p className="preview__loading">Loading…</p>}
-        {result && (
-          <pre className="preview__json">
-            {`HTTP ${result.status}\n\n${prettyBody(result.body)}`}
-          </pre>
-        )}
-      </div>
+      {/* HTML → render the live page in an iframe (so its own scripts/relative
+          fetches run against the tunnel origin). Otherwise pretty-print the
+          probed body. */}
+      {result && isHtml(result) ? (
+        <iframe
+          className="preview__frame"
+          src={target}
+          title="App preview"
+          sandbox="allow-scripts allow-same-origin allow-forms"
+        />
+      ) : (
+        <div className="preview__body">
+          {error && <p className="preview__error">Failed to reach server: {error}</p>}
+          {!error && !result && <p className="preview__loading">Loading…</p>}
+          {result && (
+            <pre className="preview__json">
+              {`HTTP ${result.status}\n\n${prettyBody(result.body)}`}
+            </pre>
+          )}
+        </div>
+      )}
     </div>
   );
 }

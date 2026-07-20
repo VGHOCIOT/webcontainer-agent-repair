@@ -39,6 +39,20 @@ export interface RunAgentLoopOptions {
   spec: string;
   validatorScript: string;
   maxIterations: number;
+  // Environment perturbation: when set, the app is launched with PORT set to
+  // this non-default value. An app that honors process.env.PORT comes up on it;
+  // one that hardcoded a port comes up elsewhere and fails the startup stage.
+  // A genuine, disclosed config-bug probe — not a seeded code bug.
+  envPort?: number | null;
+  // Environment perturbation: run `npm install --offline`. A dependency-free app
+  // installs fine; one that reached for a package fails at the install stage.
+  // Catches a builder that ignored a "no npm packages" spec.
+  offlineInstall?: boolean;
+  // Interactive runs leave the converged server listening so its preview stays
+  // live. Batch runs must set this false: an orphaned server keeps holding the
+  // port and the next run's startup then fails with EADDRINUSE, corrupting the
+  // convergence data.
+  keepServerAlive?: boolean;
   onAttempt: (attempt: Attempt) => void;
   onPreviewUrl: (url: string | null, port: number | null) => void;
   signal?: AbortSignal;
@@ -64,6 +78,9 @@ export async function runAgentLoop({
   spec,
   validatorScript,
   maxIterations,
+  envPort,
+  offlineInstall,
+  keepServerAlive = true,
   onAttempt,
   onPreviewUrl,
   signal,
@@ -140,9 +157,13 @@ export async function runAgentLoop({
       }
 
       let installLog = "";
-      const installExitCode = await runInstall(webcontainer, (chunk) => {
-        installLog += chunk;
-      });
+      const installExitCode = await runInstall(
+        webcontainer,
+        (chunk) => {
+          installLog += chunk;
+        },
+        offlineInstall,
+      );
 
       if (installExitCode !== 0) {
         attempt = {
@@ -161,9 +182,14 @@ export async function runAgentLoop({
       onAttempt(attempt);
 
       let runLog = "";
-      const start = await runStart(webcontainer, (chunk) => {
-        runLog += chunk;
-      });
+      const start = await runStart(
+        webcontainer,
+        (chunk) => {
+          runLog += chunk;
+        },
+        undefined,
+        envPort != null ? { PORT: String(envPort) } : undefined,
+      );
       previousProcess = start.process;
 
       if (!start.url) {
@@ -182,6 +208,21 @@ export async function runAgentLoop({
         break runAttempt;
       }
 
+      if (envPort != null && start.port !== envPort) {
+        attempt = {
+          ...attempt,
+          runLog,
+          error: `Server ignored process.env.PORT: expected to listen on ${envPort}, came up on ${start.port}`,
+        };
+        failure = {
+          stage: "startup",
+          report: `The app was started with the environment variable PORT=${envPort}, but it began listening on port ${start.port} instead — it is not honoring process.env.PORT (likely a hardcoded port). Read the port from process.env.PORT and only fall back to a default when it is unset. Captured output:\n\n${truncate(runLog)}`,
+        };
+        start.process.kill();
+        previousProcess = null;
+        break runAttempt;
+      }
+
       attempt = { ...attempt, runLog, status: "validating" };
       onAttempt(attempt);
       onPreviewUrl(start.url, start.port);
@@ -193,7 +234,12 @@ export async function runAgentLoop({
         attempt = { ...attempt, status: "passed", validation, usage };
         onAttempt(attempt);
         attempts.push(attempt);
-        return { attempts, stoppedReason: "converged" }; // leave server up for preview
+        if (!keepServerAlive) {
+          start.process.kill(); // free the port for the next batch run
+          previousProcess = null;
+          onPreviewUrl(null, null);
+        }
+        return { attempts, stoppedReason: "converged" }; // else leave server up for preview
       }
 
       attempt = { ...attempt, validation, error: validation.details };

@@ -52,3 +52,12 @@ export type StoppedReason =
   | "max-iterations"
   | "no-progress"
   | "aborted";
+
+// One completed pass of the agent loop within a batch. The batch runner repeats
+// the identical spec+validator N times so convergence can be read as a
+// distribution, not a single anecdote.
+export interface BatchRun {
+  index: number;
+  attempts: Attempt[];
+  stoppedReason: StoppedReason;
+}

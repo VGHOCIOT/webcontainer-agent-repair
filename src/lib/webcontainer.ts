@@ -2,13 +2,24 @@ import { WebContainer } from "@webcontainer/api";
 import type { FileSystemTree, WebContainerProcess } from "@webcontainer/api";
 import type { GeneratedFile } from "./types";
 
-let bootPromise: Promise<WebContainer> | null = null;
+// WebContainer allows exactly ONE instance per page and throws "Only a single
+// WebContainer instance can be booted" on a second boot(). A module-level `let`
+// isn't enough: a Vite HMR update re-evaluates this module and resets it to
+// null while the real instance is still alive in the page, so the next call
+// boots again and throws. Persisting the promise on globalThis survives HMR
+// (and StrictMode remounts), so boot() runs exactly once per page load.
+const BOOT_KEY = "__webcontainerBootPromise__";
+
+type BootStore = typeof globalThis & {
+  [BOOT_KEY]?: Promise<WebContainer>;
+};
 
 export function getWebContainer(): Promise<WebContainer> {
-  if (!bootPromise) {
-    bootPromise = WebContainer.boot();
+  const store = globalThis as BootStore;
+  if (!store[BOOT_KEY]) {
+    store[BOOT_KEY] = WebContainer.boot();
   }
-  return bootPromise;
+  return store[BOOT_KEY];
 }
 
 export function buildFileTree(files: GeneratedFile[]): FileSystemTree {
@@ -55,8 +66,13 @@ async function runToCompletion(
 export async function runInstall(
   webcontainer: WebContainer,
   onOutput: (chunk: string) => void,
+  offline = false,
 ): Promise<number> {
-  return runToCompletion(webcontainer, "npm", ["install"], onOutput);
+  // `--offline` forces npm to use only its cache: a dependency-free app still
+  // installs fine, but one that reached for a package it can't fetch fails at
+  // the install stage — a genuine, disclosed "no npm packages" probe.
+  const args = offline ? ["install", "--offline"] : ["install"];
+  return runToCompletion(webcontainer, "npm", args, onOutput);
 }
 
 export interface StartResult {
@@ -79,8 +95,13 @@ export async function runStart(
   webcontainer: WebContainer,
   onOutput: (chunk: string) => void,
   timeoutMs = 15_000,
+  env?: Record<string, string>,
 ): Promise<StartResult> {
-  const process = await webcontainer.spawn("npm", ["run", "start"]);
+  const process = await webcontainer.spawn(
+    "npm",
+    ["run", "start"],
+    env ? { env } : undefined,
+  );
   process.output.pipeTo(
     new WritableStream({
       write(chunk) {
