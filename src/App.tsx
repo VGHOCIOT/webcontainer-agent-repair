@@ -4,14 +4,17 @@ import { AttemptLog } from "./components/AttemptLog";
 import { PreviewPane } from "./components/PreviewPane";
 import { RunStats } from "./components/RunStats";
 import { HealingTimeline } from "./components/HealingTimeline";
+import { AttemptDiff } from "./components/AttemptDiff";
 import { DEFAULT_MODEL, DEFAULT_BUILDER_MODEL } from "./lib/anthropic";
 import { runAgentLoop } from "./lib/agentLoop";
 import { runBatch } from "./lib/batch";
+import { getWebContainer } from "./lib/webcontainer";
+import { validateApp } from "./lib/validate";
 import { generateValidator } from "./lib/validatorGen";
 import { derivePreviewPath } from "./lib/preview";
 import { DEFAULT_SPEC, FRONTEND_SPEC } from "./lib/spec";
 import { BatchSummary } from "./components/BatchSummary";
-import type { Attempt, AttemptUsage, BatchRun, StoppedReason } from "./lib/types";
+import type { Attempt, AttemptUsage, BatchRun, StoppedReason, ValidationResult } from "./lib/types";
 
 const API_KEY_STORAGE_KEY = "webcontainer-agent-repair:anthropic-api-key";
 const MODELS = ["claude-sonnet-5", "claude-opus-4-8", "claude-haiku-4-5"];
@@ -44,6 +47,8 @@ function App() {
   // checks the app pulled in no npm packages.
   const [portProbe, setPortProbe] = useState(false);
   const [offlineProbe, setOfflineProbe] = useState(false);
+  const [fuzzProbe, setFuzzProbe] = useState(false);
+  const [clientErrorProbe, setClientErrorProbe] = useState(false);
   const [attempts, setAttempts] = useState<Attempt[]>([]);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewPort, setPreviewPort] = useState<number | null>(null);
@@ -75,6 +80,13 @@ function App() {
   const [validatorError, setValidatorError] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
+
+  // Re-grade state: run the CURRENT validator against the still-running converged
+  // build (no re-mount — the server is already up), so an edited/regenerated
+  // grader can be re-applied to the same app. Answers "does this build still pass
+  // under the stricter validator?" — the grader is the variable, not the code.
+  const [regrading, setRegrading] = useState(false);
+  const [regradeResult, setRegradeResult] = useState<ValidationResult | null>(null);
 
   useEffect(() => {
     localStorage.setItem(API_KEY_STORAGE_KEY, apiKey);
@@ -141,6 +153,7 @@ function App() {
     setStoppedReason(null);
     setBatchResults([]);
     setSelectedRunIndex(null);
+    setRegradeResult(null);
     setRunning(true);
 
     const controller = new AbortController();
@@ -159,6 +172,9 @@ function App() {
         maxIterations: MAX_ITERATIONS,
         envPort: portProbe ? PROBE_PORT : null,
         offlineInstall: offlineProbe,
+        fuzz: fuzzProbe,
+        fuzzPath: previewPath,
+        clientErrors: clientErrorProbe,
         signal: controller.signal,
         onAttempt: (attempt) => {
           setAttempts((prev) => {
@@ -182,6 +198,34 @@ function App() {
     }
   }
 
+  // Re-run the current validator against the live converged server. No re-mount:
+  // the app is already listening on `previewPort`, so this only re-grades it —
+  // useful right after you Regenerate/edit the validator to see whether the same
+  // build still passes the changed grader.
+  async function handleRegrade() {
+    if (running || regrading) return;
+    if (previewPort == null) {
+      setRunError("No live build to re-grade — Build one first.");
+      return;
+    }
+    if (!validatorScript) {
+      setRunError("No validator to re-grade against — Regenerate first.");
+      return;
+    }
+    setRunError(null);
+    setRegradeResult(null);
+    setRegrading(true);
+    try {
+      const webcontainer = await getWebContainer();
+      const validation = await validateApp(webcontainer, previewPort, validatorScript);
+      setRegradeResult(validation);
+    } catch (err) {
+      setRunError((err as Error).message);
+    } finally {
+      setRegrading(false);
+    }
+  }
+
   async function handleBatch() {
     if (!apiKey.trim()) {
       setRunError("Enter your Anthropic API key first.");
@@ -194,6 +238,7 @@ function App() {
     setStoppedReason(null);
     setBatchResults([]);
     setSelectedRunIndex(null);
+    setRegradeResult(null);
     setBatchProgress({ run: 0, of: batchRuns });
     setRunning(true);
 
@@ -211,6 +256,8 @@ function App() {
         maxIterations: MAX_ITERATIONS,
         envPort: portProbe ? PROBE_PORT : null,
         offlineInstall: offlineProbe,
+        fuzz: fuzzProbe,
+        fuzzPath: previewPath,
         runs: batchRuns,
         signal: controller.signal,
         onRunStart: (runIndex) => {
@@ -364,6 +411,36 @@ function App() {
           </span>
         </label>
 
+        <label className="app__probe">
+          <input
+            type="checkbox"
+            checked={fuzzProbe}
+            onChange={(e) => setFuzzProbe(e.target.checked)}
+            disabled={running}
+          />
+          <span>
+            Fuzz probe — after the validator passes, hit the live server with
+            concurrent load and malformed input; a 5xx or a crash under fuzzing
+            fails the attempt (surfaces unhandled-input bugs the happy path hides).
+          </span>
+        </label>
+
+        <label className="app__probe">
+          <input
+            type="checkbox"
+            checked={clientErrorProbe}
+            onChange={(e) => setClientErrorProbe(e.target.checked)}
+            disabled={running}
+          />
+          <span>
+            Client-error probe — after the validator passes, watch the live
+            preview for an uncaught exception or unhandled rejection in the
+            browser; a page that throws fails the attempt (catches "server
+            healthy, client throwing" bugs the loopback validator can't see).
+            Build only — batch runs render no preview.
+          </span>
+        </label>
+
         <div className="app__actions">
           <button onClick={handleStart} disabled={running}>
             {running ? "Running…" : "Build"}
@@ -485,6 +562,7 @@ function App() {
         <section className="app__stats">
           <RunStats running={running && !selectedRun} attempts={displayAttempts} />
           <HealingTimeline attempts={displayAttempts} />
+          <AttemptDiff attempts={displayAttempts} />
           {batchResults.length > 0 && (
             <div className="app__batch">
               <h2>Batch results ({batchResults.length})</h2>
@@ -508,7 +586,33 @@ function App() {
           )}
         </section>
         <section className="app__preview">
-          <h2>Live preview</h2>
+          <div className="app__preview-head">
+            <h2>Live preview</h2>
+            {previewPort != null && (
+              <button
+                onClick={handleRegrade}
+                className="button--secondary"
+                disabled={running || regrading || !validatorScript}
+                title="Re-run the current validator against the running build (e.g. after editing the validator)"
+              >
+                {regrading ? "Re-grading…" : "Re-grade"}
+              </button>
+            )}
+          </div>
+          {regradeResult && (
+            <div
+              className={`app__regrade-result app__regrade-result--${
+                regradeResult.pass ? "pass" : "fail"
+              }`}
+            >
+              <strong>Re-grade:</strong>{" "}
+              {regradeResult.pass
+                ? `all ${regradeResult.checks.length} checks passed against the current validator.`
+                : `${regradeResult.checks.filter((c) => !c.pass).length} of ${
+                    regradeResult.checks.length
+                  } checks now fail against the current validator.`}
+            </div>
+          )}
           <PreviewPane url={previewUrl} port={previewPort} path={previewPath} />
         </section>
       </main>

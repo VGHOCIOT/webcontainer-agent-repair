@@ -46,6 +46,69 @@ export function buildFileTree(files: GeneratedFile[]): FileSystemTree {
   return tree;
 }
 
+export interface FileApplyResult {
+  written: string[];
+  removed: string[];
+  unchanged: string[];
+}
+
+async function ensureParentDir(
+  webcontainer: WebContainer,
+  filePath: string,
+): Promise<void> {
+  const dir = filePath.split("/").slice(0, -1).join("/");
+  if (dir) await webcontainer.fs.mkdir(dir, { recursive: true });
+}
+
+/**
+ * Applies the DELTA between the last attempt's files and this attempt's files
+ * to the live container filesystem, instead of re-`mount`-ing the whole tree.
+ * Returns what it actually touched so the caller can log/inspect it.
+ *
+ * Why a delta beats a blind full `mount`: `mount` MERGES and never deletes, so
+ * a file attempt 1 wrote and attempt 2 dropped would linger on disk where a
+ * stale `require` could still resolve it and mask the bug. Applying the delta
+ * removes dropped files, so on-disk state is exactly what the latest generation
+ * describes. (See CLAUDE.md on why an unchanged build is never re-run.)
+ */
+export async function applyGeneratedFiles(
+  webcontainer: WebContainer,
+  prevFiles: GeneratedFile[] | null,
+  nextFiles: GeneratedFile[],
+): Promise<FileApplyResult> {
+  // First file-writing attempt: nothing on disk yet, so mount the whole tree in
+  // one shot (cheaper than a write-per-file walk, and there's no delta to take).
+  if (!prevFiles) {
+    await webcontainer.mount(buildFileTree(nextFiles));
+    return { written: nextFiles.map((f) => f.path), removed: [], unchanged: [] };
+  }
+
+  const prevByPath = new Map(prevFiles.map((f) => [f.path, f.contents]));
+  const nextByPath = new Map(nextFiles.map((f) => [f.path, f.contents]));
+  const written: string[] = [];
+  const unchanged: string[] = [];
+  const removed: string[] = [];
+
+  for (const { path, contents } of nextFiles) {
+    if (prevByPath.get(path) === contents) {
+      unchanged.push(path); // identical bytes — no point writing them again
+      continue;
+    }
+    await ensureParentDir(webcontainer, path);
+    await webcontainer.fs.writeFile(path, contents);
+    written.push(path);
+  }
+
+  for (const { path } of prevFiles) {
+    if (!nextByPath.has(path)) {
+      await webcontainer.fs.rm(path, { force: true });
+      removed.push(path);
+    }
+  }
+
+  return { written, removed, unchanged };
+}
+
 async function runToCompletion(
   webcontainer: WebContainer,
   command: string,
