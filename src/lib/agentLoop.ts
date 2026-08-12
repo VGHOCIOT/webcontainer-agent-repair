@@ -1,13 +1,20 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { generateCode } from "./anthropic";
 import { buildRetryPrompt, buildEscalatedRetryPrompt } from "./spec";
-import { validateApp } from "./validate";
+import { validateApp, aggregateChecks } from "./validate";
+import { runFuzz } from "./fuzz";
 import {
-  buildFileTree,
+  applyGeneratedFiles,
   getWebContainer,
   runInstall,
   runStart,
 } from "./webcontainer";
+import {
+  collectPreviewErrors,
+  initPreviewErrorCapture,
+  previewErrorChecks,
+  previewErrorCheckpoint,
+} from "./previewErrors";
 import type {
   Attempt,
   FailureStage,
@@ -17,6 +24,12 @@ import type {
 import type { WebContainerProcess } from "@webcontainer/api";
 
 const MAX_STALLS = 2;
+
+// How long to let the live preview iframe load and run its client JS before
+// collecting any uncaught client errors. Only paid when the client-error probe
+// is on (see `clientErrors` below); a value this size comfortably covers React
+// render latency + the iframe fetching and executing the page's inline script.
+const PREVIEW_SETTLE_MS = 2_000;
 
 function truncate(text: string, maxChars = 4000): string {
   if (text.length <= maxChars) return text;
@@ -48,6 +61,22 @@ export interface RunAgentLoopOptions {
   // installs fine; one that reached for a package fails at the install stage.
   // Catches a builder that ignored a "no npm packages" spec.
   offlineInstall?: boolean;
+  // Environment perturbation: after the generated validator passes, run a static
+  // black-box fuzz probe (concurrency + malformed input) against the live
+  // server. Its checks are merged into the attempt's validation, so a happy-path-
+  // correct app that 500s under hostile input still fails and gets fed back.
+  fuzz?: boolean;
+  // Endpoint the fuzz probe targets (the app's representative path). Defaults to
+  // "/". Ignored unless `fuzz` is set.
+  fuzzPath?: string;
+  // Environment perturbation: after the generated validator passes, give the
+  // live preview iframe a moment to load and then fail the attempt if the page
+  // threw an uncaught exception / unhandled rejection in the BROWSER. Catches a
+  // "server healthy, client throwing" bug the loopback validator can't see.
+  // Timing-dependent on a live preview iframe, so it's meaningful for the
+  // interactive Build path — NOT batch, where no preview is rendered (see the
+  // note where it's consumed).
+  clientErrors?: boolean;
   // Interactive runs leave the converged server listening so its preview stays
   // live. Batch runs must set this false: an orphaned server keeps holding the
   // port and the next run's startup then fails with EADDRINUSE, corrupting the
@@ -80,15 +109,23 @@ export async function runAgentLoop({
   maxIterations,
   envPort,
   offlineInstall,
+  fuzz,
+  fuzzPath,
+  clientErrors,
   keepServerAlive = true,
   onAttempt,
   onPreviewUrl,
   signal,
 }: RunAgentLoopOptions): Promise<RunAgentLoopResult> {
   const webcontainer = await getWebContainer();
+  if (clientErrors) initPreviewErrorCapture(webcontainer);
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: spec }];
   const attempts: Attempt[] = [];
   let previousProcess: WebContainerProcess | null = null;
+  // The files applied to disk on the previous attempt, so each attempt writes
+  // only its DELTA (and removes files it dropped) instead of re-mounting the
+  // whole tree. null until the first file-writing attempt.
+  let prevFiles: GeneratedFile[] | null = null;
 
   let prevFilesSig: string | null = null;
   let prevFailureSig: string | null = null;
@@ -149,7 +186,10 @@ export async function runAgentLoop({
       attempt = { ...attempt, files: gen.files, status: "installing" };
       onAttempt(attempt);
 
-      await webcontainer.mount(buildFileTree(gen.files));
+      // Apply just this attempt's file delta — the previous build stays on disk
+      // and only what changed is written (and dropped files removed).
+      await applyGeneratedFiles(webcontainer, prevFiles, gen.files);
+      prevFiles = gen.files;
 
       if (previousProcess) {
         previousProcess.kill();
@@ -225,9 +265,32 @@ export async function runAgentLoop({
 
       attempt = { ...attempt, runLog, status: "validating" };
       onAttempt(attempt);
+      // Checkpoint before the preview goes live so a later collection only sees
+      // client errors from THIS attempt's page, not a prior attempt's.
+      const previewAt = previewErrorCheckpoint();
       onPreviewUrl(start.url, start.port);
 
-      const validation = await validateApp(webcontainer, start.port!, validatorScript);
+      let validation = await validateApp(webcontainer, start.port!, validatorScript);
+
+      // Only fuzz an app the validator already deemed correct — the probe asks a
+      // strictly harder question (does it survive load + hostile input), and its
+      // checks join the same validation result so a failure feeds back normally.
+      if (fuzz && validation.pass) {
+        const fuzzChecks = await runFuzz(webcontainer, start.port!, fuzzPath ?? "/");
+        validation = aggregateChecks([...validation.checks, ...fuzzChecks]);
+      }
+
+      // Client-error probe: same "harder question, merged check" shape as fuzz,
+      // but the signal comes from the live preview iframe rather than a script,
+      // so it only means anything when a preview is actually rendered (the
+      // interactive Build path). Give the iframe time to load + run its inline
+      // script, then fail the attempt on any uncaught browser error. In batch
+      // mode no preview is rendered, so the caller leaves this off.
+      if (clientErrors && validation.pass) {
+        await new Promise((resolve) => setTimeout(resolve, PREVIEW_SETTLE_MS));
+        const errs = collectPreviewErrors(start.port!, previewAt);
+        validation = aggregateChecks([...validation.checks, ...previewErrorChecks(errs)]);
+      }
 
       if (validation.pass) {
         usage.elapsedMs = performance.now() - startedAt;
