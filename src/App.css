@@ -9,6 +9,13 @@
   box-sizing: border-box;
 }
 
+.app__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
 .app__header h1 {
   margin: 0 0 0.25rem;
   font-size: 1.5rem;
@@ -16,8 +23,56 @@
 
 .app__subtitle {
   margin: 0;
-  color: var(--muted, #888);
+  color: var(--muted);
   max-width: 60ch;
+}
+
+/* ---- Standardized controls -------------------------------------------------
+   Every button is one of: primary (accent fill), secondary (accent outline),
+   or ghost (quiet). Size comes from context (large in the action bar, small in
+   panel headers); variant only sets color. Pills use --radius-pill, chips
+   --radius-sm — consistently, everywhere. */
+.btn,
+.button--secondary,
+.app__actions button,
+.panel__header button,
+.theme-toggle {
+  font: inherit;
+  cursor: pointer;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  line-height: 1.4;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Primary + secondary variants */
+.button--secondary {
+  background: transparent;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.button--secondary:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+
+.theme-toggle {
+  padding: 0.35rem 0.7rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  background: var(--surface-raised);
+  border-color: var(--border);
+  color: var(--fg);
+  white-space: nowrap;
+}
+
+.theme-toggle:hover {
+  border-color: var(--border-strong);
 }
 
 .app__config {
@@ -43,10 +98,18 @@
 .field textarea {
   font: inherit;
   padding: 0.5rem;
-  border-radius: 6px;
-  border: 1px solid #444;
-  background: transparent;
-  color: inherit;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--fg);
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  border-color: var(--accent);
 }
 
 .field--spec {
@@ -57,7 +120,7 @@
   grid-column: 1 / -1;
   margin: 0;
   font-size: 0.75rem;
-  color: var(--muted, #888);
+  color: var(--muted);
 }
 
 .app__probe {
@@ -66,7 +129,7 @@
   align-items: flex-start;
   gap: 0.5rem;
   font-size: 0.75rem;
-  color: var(--muted, #888);
+  color: var(--muted);
 }
 
 .app__probe input {
@@ -82,12 +145,16 @@
   align-items: center;
   gap: 0.4rem;
   font-size: 0.85rem;
-  color: var(--muted, #888);
+  color: var(--muted);
 }
 
 .app__batch-control input {
   width: 3.5rem;
   padding: 0.3rem 0.4rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--fg);
 }
 
 .app__batch {
@@ -114,7 +181,7 @@
 
 .batch-stat__label {
   font-size: 0.7rem;
-  color: var(--muted, #888);
+  color: var(--muted);
 }
 
 .batch-block {
@@ -126,7 +193,7 @@
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  color: var(--muted, #888);
+  color: var(--muted);
 }
 
 .batch-list {
@@ -160,8 +227,8 @@
 }
 
 .batch-hist__bar {
-  background: var(--surface, #2a2a2a);
-  border-radius: 3px;
+  background: var(--surface-raised);
+  border-radius: var(--radius-sm);
   overflow: hidden;
   height: 0.8rem;
 }
@@ -169,18 +236,18 @@
 .batch-hist__fill {
   display: block;
   height: 100%;
-  background: #4ea1ff;
+  background: var(--info);
 }
 
 .batch-hist__count {
   font-variant-numeric: tabular-nums;
-  color: var(--muted, #888);
+  color: var(--muted);
 }
 
 .batch-summary__totals {
   margin: 0;
   font-size: 0.75rem;
-  color: var(--muted, #888);
+  color: var(--muted);
 }
 
 .field--spec textarea {
@@ -196,29 +263,23 @@
 }
 
 .app__actions button {
-  font: inherit;
-  padding: 0.6rem 1.4rem;
-  border-radius: 6px;
-  border: none;
-  background: #6d5bff;
-  color: white;
-  cursor: pointer;
+  padding: var(--control-pad-y) var(--control-pad-x);
+  font-weight: 600;
 }
 
-.app__actions button:disabled {
-  opacity: 0.5;
-  cursor: default;
+/* Primary = any action-bar button that isn't explicitly secondary. */
+.app__actions button:not(.button--secondary) {
+  background: var(--accent);
+  color: var(--accent-contrast);
 }
 
-.button--secondary {
-  background: transparent !important;
-  border: 1px solid #6d5bff !important;
-  color: #6d5bff !important;
+.app__actions button:not(.button--secondary):hover:not(:disabled) {
+  background: var(--accent-hover);
 }
 
 .app__error {
   grid-column: 1 / -1;
-  color: #ff6b6b;
+  color: var(--fail);
 }
 
 .app__done {
@@ -227,11 +288,11 @@
 }
 
 .app__done--pass {
-  color: #4caf50;
+  color: var(--pass);
 }
 
 .app__done--fail {
-  color: #ff9800;
+  color: var(--warn);
 }
 
 .app__body {
@@ -268,7 +329,7 @@
 
 .app__stats {
   padding-top: 1rem;
-  border-top: 1px solid #333;
+  border-top: 1px solid var(--border);
 }
 
 .app__log h2,
@@ -289,29 +350,30 @@
 }
 
 .attempt-log__empty {
-  color: var(--muted, #888);
+  color: var(--muted);
 }
 
 .attempt {
-  border-radius: 8px;
-  border: 1px solid #333;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
   padding: 0.6rem 0.8rem;
-  border-left: 4px solid #666;
+  border-left: 4px solid var(--border-strong);
+  background: var(--surface);
 }
 
 .attempt--passed {
-  border-left-color: #4caf50;
+  border-left-color: var(--pass);
 }
 
 .attempt--failed {
-  border-left-color: #ff6b6b;
+  border-left-color: var(--fail);
 }
 
 .attempt--generating,
 .attempt--installing,
 .attempt--starting,
 .attempt--validating {
-  border-left-color: #6d5bff;
+  border-left-color: var(--accent);
 }
 
 .attempt__header {
@@ -324,7 +386,7 @@
 .attempt__files,
 .attempt__usage {
   font-size: 0.75rem;
-  color: var(--muted, #888);
+  color: var(--muted);
   margin-top: 0.25rem;
   font-family: ui-monospace, monospace;
 }
@@ -338,9 +400,10 @@
   padding: 0.5rem;
   max-height: 300px;
   overflow: auto;
-  background: #1c1c1c;
-  color: #ddd;
-  border-radius: 6px;
+  background: var(--code-bg);
+  color: var(--code-fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -348,14 +411,14 @@
 .attempt__error {
   margin-top: 0.35rem;
   font-size: 0.85rem;
-  color: #ff8a8a;
+  color: var(--fail);
   white-space: pre-wrap;
 }
 
 .attempt__success {
   margin-top: 0.35rem;
   font-size: 0.85rem;
-  color: #7cd992;
+  color: var(--pass);
 }
 
 .run-stats {
@@ -374,28 +437,29 @@
   margin: 0;
 }
 
+/* ---- Pills (status) + chips (rectangular tags) ---------------------------- */
 .run-stats__badge {
   display: inline-block;
-  padding: 0.15rem 0.6rem;
-  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+  border-radius: var(--radius-pill);
   font-size: 0.7rem;
   font-weight: 600;
   line-height: 1.4;
 }
 
 .run-stats__badge--pending {
-  background: rgba(109, 91, 255, 0.15);
-  color: #6d5bff;
+  background: var(--accent-soft);
+  color: var(--accent-soft-fg);
 }
 
 .run-stats__badge--success {
-  background: rgba(76, 175, 80, 0.15);
-  color: #4caf50;
+  background: var(--pass-soft);
+  color: var(--pass);
 }
 
 .run-stats__badge--failure {
-  background: rgba(255, 107, 107, 0.15);
-  color: #ff6b6b;
+  background: var(--fail-soft);
+  color: var(--fail);
 }
 
 .run-stats__failures {
@@ -406,14 +470,14 @@
   flex-wrap: wrap;
   gap: 0.4rem 0.8rem;
   font-size: 0.75rem;
-  color: var(--muted, #888);
+  color: var(--muted);
   font-family: ui-monospace, monospace;
 }
 
 .run-stats__totals {
   margin: 0;
   font-size: 0.75rem;
-  color: var(--muted, #888);
+  color: var(--muted);
   font-family: ui-monospace, monospace;
 }
 
@@ -421,57 +485,94 @@
   margin: 0;
   font-size: 0.75rem;
   font-weight: 600;
-  color: #ff9800;
+  color: var(--warn);
 }
 
-/* Validator panel */
-.app__validator {
-  border: 1px solid #333;
-  border-radius: 8px;
+/* ---- Graders group (validator + interaction driver) ----------------------- */
+.graders {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.graders__intro {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.graders__intro h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.graders__intro p {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+  max-width: 70ch;
+}
+
+.graders__grid {
+  display: grid;
+  /* Two panels split; a lone validator (non-frontend spec) fills the width. */
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0.75rem;
+}
+
+.panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
   padding: 0.8rem 1rem;
+  background: var(--surface);
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
 }
 
-.validator__header {
+.panel__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
 }
 
-.validator__header h2 {
+.panel__title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.panel__title h3 {
   margin: 0;
-  font-size: 1rem;
+  font-size: 0.95rem;
 }
 
-.validator__header button {
-  font: inherit;
+.panel__where {
+  font-size: 0.68rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.panel__header button {
   font-size: 0.8rem;
-  padding: 0.3rem 0.9rem;
-  border-radius: 6px;
-  cursor: pointer;
+  padding: var(--control-pad-y-sm) var(--control-pad-x-sm);
 }
 
-.validator__header button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.validator__hint,
-.validator__empty,
-.validator__usage {
+.panel__hint,
+.panel__empty,
+.panel__usage {
   margin: 0;
   font-size: 0.75rem;
-  color: var(--muted, #888);
+  color: var(--muted);
 }
 
-.validator__usage {
+.panel__usage {
   font-family: ui-monospace, monospace;
 }
 
-.validator__checks {
+.panel__checks {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -480,28 +581,29 @@
   gap: 0.4rem;
 }
 
-.validator__check-chip {
+.panel__check-chip {
   font-family: ui-monospace, monospace;
   font-size: 0.7rem;
   padding: 0.15rem 0.5rem;
-  border-radius: 999px;
-  background: rgba(109, 91, 255, 0.15);
-  color: #a99dff;
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--accent-soft-fg);
 }
 
-.validator__script summary {
+.panel__script summary {
   cursor: pointer;
   font-size: 0.8rem;
 }
 
-.validator__script pre {
+.panel__script pre {
   margin: 0.35rem 0 0;
   padding: 0.5rem;
   max-height: 320px;
   overflow: auto;
-  background: #1c1c1c;
-  color: #ddd;
-  border-radius: 6px;
+  background: var(--code-bg);
+  color: var(--code-fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   font-size: 0.75rem;
   white-space: pre-wrap;
   word-break: break-word;
@@ -529,10 +631,10 @@
 .timeline__regressions {
   font-size: 0.7rem;
   font-weight: 600;
-  color: #ff9800;
+  color: var(--warn);
   padding: 0.1rem 0.5rem;
-  border-radius: 999px;
-  background: rgba(255, 152, 0, 0.15);
+  border-radius: var(--radius-pill);
+  background: var(--warn-soft);
 }
 
 .timeline__scroll {
@@ -554,59 +656,59 @@
 .timeline__check-name {
   text-align: left;
   font-family: ui-monospace, monospace;
-  color: var(--muted, #888);
+  color: var(--muted);
   white-space: nowrap;
 }
 
 .timeline__attempt-head {
-  color: var(--muted, #888);
+  color: var(--muted);
   font-weight: 600;
 }
 
 .timeline__cell {
   font-weight: 700;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .timeline__cell--pass {
-  color: #4caf50;
+  color: var(--pass);
 }
 
 .timeline__cell--fail {
-  color: #ff6b6b;
+  color: var(--fail);
 }
 
 .timeline__cell--absent {
-  color: #555;
+  color: var(--muted);
 }
 
 .timeline__cell--regression {
-  outline: 2px solid #ff9800;
+  outline: 2px solid var(--warn);
   outline-offset: -2px;
 }
 
 .timeline__attempt-head--passed {
-  color: #4caf50;
+  color: var(--pass);
 }
 
 .timeline__attempt-head--failed {
-  color: #ff6b6b;
+  color: var(--fail);
 }
 
 .timeline__result-row td,
 .timeline__cost-row td {
-  border-top: 1px solid var(--border, #333);
+  border-top: 1px solid var(--border);
   font-size: 0.7rem;
   font-weight: 600;
-  color: var(--muted, #888);
+  color: var(--muted);
 }
 
 .timeline__result--passed {
-  color: #4caf50;
+  color: var(--pass);
 }
 
 .timeline__result--failed {
-  color: #ff6b6b;
+  color: var(--fail);
 }
 
 .timeline__cost {
@@ -621,13 +723,13 @@
 }
 
 .timeline__cost-time {
-  color: #555;
+  color: var(--muted);
 }
 
 .app__viewing {
   font-size: 0.8rem;
   font-weight: 400;
-  color: var(--muted, #888);
+  color: var(--muted);
 }
 
 .spec-presets {
@@ -637,18 +739,23 @@
 }
 
 .spec-preset {
+  font: inherit;
   font-size: 0.75rem;
-  padding: 0.25rem 0.6rem;
-  border: 1px solid var(--border, #333);
-  border-radius: 999px;
+  padding: 0.25rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
   background: transparent;
-  color: var(--muted, #888);
+  color: var(--muted);
   cursor: pointer;
 }
 
+.spec-preset:hover {
+  border-color: var(--border-strong);
+}
+
 .spec-preset--active {
-  border-color: #4ea1ff;
-  color: #4ea1ff;
+  border-color: var(--info);
+  color: var(--info);
 }
 
 .app__run-picker {
@@ -659,25 +766,26 @@
 }
 
 .run-chip {
+  font: inherit;
   font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
   padding: 0.2rem 0.5rem;
-  border: 1px solid var(--border, #333);
-  border-radius: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   background: transparent;
   cursor: pointer;
 }
 
 .run-chip--pass {
-  color: #4caf50;
+  color: var(--pass);
 }
 
 .run-chip--fail {
-  color: #ff6b6b;
+  color: var(--fail);
 }
 
 .run-chip--active {
-  outline: 2px solid #4ea1ff;
+  outline: 2px solid var(--info);
   outline-offset: -1px;
 }
 
@@ -685,8 +793,8 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  border: 1px solid #333;
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
   overflow: hidden;
   min-height: 300px;
 }
@@ -694,20 +802,20 @@
 .preview--empty {
   align-items: center;
   justify-content: center;
-  color: var(--muted, #888);
+  color: var(--muted);
 }
 
 .preview__bar {
   padding: 0.4rem 0.6rem;
-  background: #1c1c1c;
-  color: #ddd;
+  background: var(--surface-raised);
+  color: var(--fg);
   font-family: ui-monospace, monospace;
   font-size: 0.75rem;
-  border-bottom: 1px solid #333;
+  border-bottom: 1px solid var(--border);
 }
 
 .preview__url {
-  color: #9ecbff;
+  color: var(--info);
   text-decoration: none;
 }
 
@@ -725,7 +833,7 @@
 .preview__body {
   flex: 1;
   overflow: auto;
-  background: #0d0d0d;
+  background: var(--code-bg);
 }
 
 .preview__loading,
@@ -733,11 +841,11 @@
   margin: 0.75rem;
   font-family: ui-monospace, monospace;
   font-size: 0.85rem;
-  color: var(--muted, #888);
+  color: var(--muted);
 }
 
 .preview__error {
-  color: #ff8a8a;
+  color: var(--fail);
 }
 
 .preview__json {
@@ -745,8 +853,8 @@
   padding: 0.75rem;
   font-family: ui-monospace, monospace;
   font-size: 0.85rem;
-  color: #ddd;
-  background: #0d0d0d;
+  color: var(--code-fg);
+  background: var(--code-bg);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -765,10 +873,10 @@
 }
 
 .attempt-diff__attempt {
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   padding: 0.4rem 0.5rem;
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--surface-raised);
 }
 
 .attempt-diff__attempt-head {
@@ -786,17 +894,17 @@
 
 .attempt-diff__base {
   font-weight: 400;
-  color: var(--muted, #888);
+  color: var(--muted);
 }
 
 .attempt-diff__unchanged {
   font-size: 0.72rem;
-  color: var(--muted, #888);
+  color: var(--muted);
   font-style: italic;
 }
 
 .attempt-diff__file {
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid var(--border);
   padding: 0.25rem 0;
 }
 
@@ -814,28 +922,28 @@
   text-transform: uppercase;
   letter-spacing: 0.03em;
   padding: 0.05rem 0.35rem;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   font-weight: 700;
 }
 
 .attempt-diff__kind--added {
-  color: #7ee787;
-  background: rgba(126, 231, 135, 0.12);
+  color: var(--pass);
+  background: var(--pass-soft);
 }
 
 .attempt-diff__kind--removed {
-  color: #ff8a8a;
-  background: rgba(255, 138, 138, 0.12);
+  color: var(--fail);
+  background: var(--fail-soft);
 }
 
 .attempt-diff__kind--modified {
-  color: #d2a8ff;
-  background: rgba(210, 168, 255, 0.12);
+  color: var(--accent-soft-fg);
+  background: var(--accent-soft);
 }
 
 .attempt-diff__path {
   flex: 1;
-  color: #ddd;
+  color: var(--fg);
 }
 
 .attempt-diff__stat {
@@ -845,18 +953,20 @@
 }
 
 .attempt-diff__stat-add {
-  color: #7ee787;
+  color: var(--pass);
 }
 
 .attempt-diff__stat-del {
-  color: #ff8a8a;
+  color: var(--fail);
 }
 
 .attempt-diff__hunk {
   margin: 0.3rem 0 0;
   padding: 0.4rem;
-  background: #0d0d0d;
-  border-radius: 4px;
+  background: var(--code-bg);
+  color: var(--code-fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   overflow-x: auto;
   font-family: ui-monospace, monospace;
   font-size: 0.72rem;
@@ -871,21 +981,21 @@
   display: inline-block;
   width: 1ch;
   margin-right: 0.5ch;
-  color: var(--muted, #888);
+  color: var(--muted);
 }
 
 .attempt-diff__line--add {
-  color: #7ee787;
-  background: rgba(126, 231, 135, 0.08);
+  color: var(--pass);
+  background: var(--pass-soft);
 }
 
 .attempt-diff__line--del {
-  color: #ff8a8a;
-  background: rgba(255, 138, 138, 0.08);
+  color: var(--fail);
+  background: var(--fail-soft);
 }
 
 .attempt-diff__line--ctx {
-  color: #999;
+  color: var(--muted);
 }
 
 /* ---- Re-grade ---- */
@@ -903,19 +1013,153 @@
 .app__regrade-result {
   margin: 0.5rem 0;
   padding: 0.4rem 0.6rem;
-  border-radius: 6px;
+  border-radius: var(--radius);
   font-size: 0.78rem;
   border: 1px solid transparent;
 }
 
 .app__regrade-result--pass {
-  color: #7ee787;
-  background: rgba(126, 231, 135, 0.1);
-  border-color: rgba(126, 231, 135, 0.3);
+  color: var(--pass);
+  background: var(--pass-soft);
+  border-color: var(--pass-soft);
 }
 
 .app__regrade-result--fail {
+  color: var(--fail);
+  background: var(--fail-soft);
+  border-color: var(--fail-soft);
+}
+
+/* Preview replay (visual break -> heal) */
+.replay {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.replay__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.replay__head h2 {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.replay__head button {
+  font-size: 0.8rem;
+  padding: var(--control-pad-y-sm) var(--control-pad-x-sm);
+}
+
+.replay__hint {
+  margin: 0;
+  font-size: 0.7rem;
+  color: var(--muted);
+  max-width: 60ch;
+}
+
+.replay__stage {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.replay__frame {
+  width: 100%;
+  height: 340px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: #fff; /* app pages assume a white page background */
+}
+
+.replay__caption {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.replay__badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.15rem 0.55rem;
+  border-radius: var(--radius-pill);
+}
+
+.replay__badge--pass {
+  color: var(--pass);
+  background: var(--pass-soft);
+}
+
+.replay__badge--fail {
+  color: var(--fail);
+  background: var(--fail-soft);
+}
+
+.replay__healed {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--warn);
+}
+
+.replay__strip {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding-bottom: 0.25rem;
+}
+
+.replay__thumb {
+  position: relative;
+  flex: 0 0 auto;
+  width: 120px;
+  height: 84px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: #fff;
+  cursor: pointer;
+}
+
+.replay__thumb--active {
+  outline: 2px solid var(--info);
+  outline-offset: -2px;
+}
+
+.replay__thumb--healed {
+  border-color: var(--warn);
+}
+
+/* Shrink the full page into the thumbnail box; pointer-events off so the
+   button, not the iframe, takes the click. */
+.replay__thumb-frame {
+  width: 480px;
+  height: 336px;
+  border: 0;
+  transform: scale(0.25);
+  transform-origin: top left;
+  pointer-events: none;
+}
+
+.replay__thumb-label {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  padding: 0 0.25rem;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.65);
+}
+
+.replay__thumb-label--pass {
+  color: #7ee787;
+}
+
+.replay__thumb-label--fail {
   color: #ff8a8a;
-  background: rgba(255, 138, 138, 0.1);
-  border-color: rgba(255, 138, 138, 0.3);
 }
