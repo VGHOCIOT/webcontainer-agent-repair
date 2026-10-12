@@ -15,8 +15,10 @@ import {
   previewErrorChecks,
   previewErrorCheckpoint,
 } from "./previewErrors";
+import { drivePreview, registerInteractionDriver } from "./previewDriver";
 import type {
   Attempt,
+  CheckResult,
   FailureStage,
   GeneratedFile,
   StoppedReason,
@@ -24,6 +26,20 @@ import type {
 import type { WebContainerProcess } from "@webcontainer/api";
 
 const MAX_STALLS = 2;
+
+// A post-startup check producer: given the running app, returns per-check
+// results honoring the shared { name, pass, details } contract. The loop runs a
+// list of these after the loopback validator passes and merges their output —
+// see where `checkProbes` is built in runAgentLoop.
+interface ProbeContext {
+  port: number;
+  url: string; // the preview tunnel URL (for browser-side probes)
+  previewCheckpoint: number; // performance.now() from just before the preview went live
+}
+interface CheckProbe {
+  id: string;
+  run: (ctx: ProbeContext) => Promise<CheckResult[]>;
+}
 
 // How long to let the live preview iframe load and run its client JS before
 // collecting any uncaught client errors. Only paid when the client-error probe
@@ -69,6 +85,19 @@ export interface RunAgentLoopOptions {
   // Endpoint the fuzz probe targets (the app's representative path). Defaults to
   // "/". Ignored unless `fuzz` is set.
   fuzzPath?: string;
+  // Interaction-level grader. When set, this per-spec driver script is injected
+  // into the preview (see previewDriver.ts): after the loopback validator
+  // passes, the loop loads the app in its OWN hidden iframe, the driver performs
+  // real DOM interactions (type, click, toggle) and asserts on the result, and
+  // its checks merge into validation. This is the ONLY grader that can see
+  // frontend behavior the served HTML doesn't reveal, so a genuine UI bug fails
+  // the attempt and feeds back. Because it owns its iframe (not the visible
+  // PreviewPane), it runs in BOTH Build and batch — a frontend spec must be
+  // UI-graded in batch too, or "converged" would mean only the server was right.
+  interactionDriver?: string;
+  // Path the interaction driver loads the app at (its representative page).
+  // Defaults to `fuzzPath` then "/". Ignored unless `interactionDriver` is set.
+  interactionPath?: string;
   // Environment perturbation: after the generated validator passes, give the
   // live preview iframe a moment to load and then fail the attempt if the page
   // threw an uncaught exception / unhandled rejection in the BROWSER. Catches a
@@ -101,6 +130,11 @@ export interface RunAgentLoopResult {
  * guard cuts the loop short when the model returns identical code or reproduces
  * the identical failure, so a stuck run can't burn the whole iteration budget.
  */
+// The server from the most recent run, which can outlive it (a converged run keeps
+// its server up for the preview; an aborted run can leave one behind). A new run
+// kills it first, or the fresh app hits EADDRINUSE and exits 1 before listening.
+let liveServer: WebContainerProcess | null = null;
+
 export async function runAgentLoop({
   apiKey,
   model,
@@ -112,13 +146,67 @@ export async function runAgentLoop({
   fuzz,
   fuzzPath,
   clientErrors,
+  interactionDriver,
+  interactionPath,
   keepServerAlive = true,
   onAttempt,
   onPreviewUrl,
   signal,
 }: RunAgentLoopOptions): Promise<RunAgentLoopResult> {
   const webcontainer = await getWebContainer();
+  if (liveServer) {
+    liveServer.kill();
+    liveServer = null;
+  }
   if (clientErrors) initPreviewErrorCapture(webcontainer);
+  // Register the interaction driver once — setPreviewScript applies to every
+  // subsequent preview load for the session, so it need not be re-set per attempt.
+  if (interactionDriver) await registerInteractionDriver(webcontainer, interactionDriver);
+
+  // Post-startup check probes, in run order. Each returns CheckResult[] honoring
+  // the shared { name, pass, details } contract; once the loopback validator
+  // passes, the loop runs these against the live server and short-circuits on
+  // the first failure. This is the single place checks are composed — the
+  // frontend grader (interaction driver) and the opt-in perturbations
+  // (fuzz, client-errors) are uniform here, so adding a check is one push, not
+  // another bespoke stage. (PORT/offline are stage modifiers on install/startup,
+  // not post-validation check producers, so they live elsewhere.)
+  // The interaction driver also captures a snapshot of the rendered DOM; the
+  // probe returns only checks (uniform pipeline), so it stashes the snapshot
+  // here for the loop to attach to the attempt. Reset each attempt.
+  const snapshotHolder: { value?: string } = {};
+
+  const checkProbes: CheckProbe[] = [];
+  if (interactionDriver) {
+    checkProbes.push({
+      id: "interaction",
+      run: async (ctx) => {
+        const { checks, snapshot } = await drivePreview(
+          ctx.url,
+          interactionPath ?? fuzzPath ?? "/",
+        );
+        if (snapshot) snapshotHolder.value = snapshot;
+        return checks;
+      },
+    });
+  }
+  if (fuzz) {
+    checkProbes.push({
+      id: "fuzz",
+      run: (ctx) => runFuzz(webcontainer, ctx.port, fuzzPath ?? "/"),
+    });
+  }
+  if (clientErrors) {
+    checkProbes.push({
+      id: "client-errors",
+      run: async (ctx) => {
+        // Let the preview iframe load + run its client JS, then read what threw.
+        await new Promise((resolve) => setTimeout(resolve, PREVIEW_SETTLE_MS));
+        return previewErrorChecks(collectPreviewErrors(ctx.port, ctx.previewCheckpoint));
+      },
+    });
+  }
+
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: spec }];
   const attempts: Attempt[] = [];
   let previousProcess: WebContainerProcess | null = null;
@@ -231,6 +319,7 @@ export async function runAgentLoop({
         envPort != null ? { PORT: String(envPort) } : undefined,
       );
       previousProcess = start.process;
+      liveServer = start.process;
 
       if (!start.url) {
         const reason = start.timedOut
@@ -272,24 +361,30 @@ export async function runAgentLoop({
 
       let validation = await validateApp(webcontainer, start.port!, validatorScript);
 
-      // Only fuzz an app the validator already deemed correct — the probe asks a
-      // strictly harder question (does it survive load + hostile input), and its
-      // checks join the same validation result so a failure feeds back normally.
-      if (fuzz && validation.pass) {
-        const fuzzChecks = await runFuzz(webcontainer, start.port!, fuzzPath ?? "/");
-        validation = aggregateChecks([...validation.checks, ...fuzzChecks]);
+      // The loopback validator only sees served HTML/JSON. Once it's satisfied,
+      // run the post-startup check probes against the live server — the frontend
+      // grader (drives the real UI) and any opt-in perturbations — merging each
+      // probe's checks and short-circuiting on the first failure, so a genuine
+      // bug invisible to every server-side check still fails the attempt and
+      // feeds back. All probes are composed uniformly (see `checkProbes` above).
+      snapshotHolder.value = undefined;
+      if (validation.pass && checkProbes.length > 0) {
+        const ctx: ProbeContext = {
+          port: start.port!,
+          url: start.url,
+          previewCheckpoint: previewAt,
+        };
+        for (const probe of checkProbes) {
+          const checks = await probe.run(ctx);
+          validation = aggregateChecks([...validation.checks, ...checks]);
+          if (!validation.pass) break;
+        }
       }
-
-      // Client-error probe: same "harder question, merged check" shape as fuzz,
-      // but the signal comes from the live preview iframe rather than a script,
-      // so it only means anything when a preview is actually rendered (the
-      // interactive Build path). Give the iframe time to load + run its inline
-      // script, then fail the attempt on any uncaught browser error. In batch
-      // mode no preview is rendered, so the caller leaves this off.
-      if (clientErrors && validation.pass) {
-        await new Promise((resolve) => setTimeout(resolve, PREVIEW_SETTLE_MS));
-        const errs = collectPreviewErrors(start.port!, previewAt);
-        validation = aggregateChecks([...validation.checks, ...previewErrorChecks(errs)]);
+      // Carry the rendered snapshot (if the driver ran) onto the attempt, on
+      // both the pass and fail paths below — a failing interaction check is
+      // exactly the "broken UI" frame worth replaying.
+      if (snapshotHolder.value) {
+        attempt = { ...attempt, previewSnapshot: snapshotHolder.value };
       }
 
       if (validation.pass) {

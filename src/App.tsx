@@ -4,7 +4,9 @@ import { AttemptLog } from "./components/AttemptLog";
 import { PreviewPane } from "./components/PreviewPane";
 import { RunStats } from "./components/RunStats";
 import { HealingTimeline } from "./components/HealingTimeline";
+import { PreviewReplay } from "./components/PreviewReplay";
 import { AttemptDiff } from "./components/AttemptDiff";
+import { ThemeToggle } from "./components/ThemeToggle";
 import { DEFAULT_MODEL, DEFAULT_BUILDER_MODEL } from "./lib/anthropic";
 import { runAgentLoop } from "./lib/agentLoop";
 import { runBatch } from "./lib/batch";
@@ -13,6 +15,8 @@ import { validateApp } from "./lib/validate";
 import { generateValidator } from "./lib/validatorGen";
 import { derivePreviewPath } from "./lib/preview";
 import { DEFAULT_SPEC, FRONTEND_SPEC } from "./lib/spec";
+import { TASKS_SPEC, FILTER_SPEC, SEARCH_SPEC } from "./lib/interactive";
+import { generateDriver } from "./lib/driverGen";
 import { BatchSummary } from "./components/BatchSummary";
 import type { Attempt, AttemptUsage, BatchRun, StoppedReason, ValidationResult } from "./lib/types";
 
@@ -21,9 +25,22 @@ const MODELS = ["claude-sonnet-5", "claude-opus-4-8", "claude-haiku-4-5"];
 const MAX_ITERATIONS = 6;
 // Built-in spec presets. The REST endpoint keeps the preview as raw JSON; the
 // frontend app renders a real little UI in the preview pane.
-const SPEC_PRESETS = [
+// `frontend` marks a spec that has a UI worth grading in the browser: for those
+// the interaction driver is authored + run automatically (it's a grader, not an
+// opt-in perturbation). `driverPath` is the page it drives (the app's HTML root,
+// NOT the validator's first probed endpoint, which may be a JSON API). The
+// driver itself is model-authored from the spec at run time (see driverGen).
+const SPEC_PRESETS: {
+  name: string;
+  spec: string;
+  frontend?: boolean;
+  driverPath?: string;
+}[] = [
   { name: "REST endpoint", spec: DEFAULT_SPEC },
-  { name: "Frontend app", spec: FRONTEND_SPEC },
+  { name: "Frontend app", spec: FRONTEND_SPEC, frontend: true, driverPath: "/" },
+  { name: "Interactive tasks", spec: TASKS_SPEC, frontend: true, driverPath: "/" },
+  { name: "Task filter", spec: FILTER_SPEC, frontend: true, driverPath: "/" },
+  { name: "Live search", spec: SEARCH_SPEC, frontend: true, driverPath: "/" },
 ];
 // Non-default port the PORT-honoring probe launches the app with (see envPort
 // in agentLoop). Anything other than the conventional 3000 fallback works.
@@ -79,6 +96,18 @@ function App() {
   const [generatingValidator, setGeneratingValidator] = useState(false);
   const [validatorError, setValidatorError] = useState<string | null>(null);
 
+  // The frontend grader: a model-authored interaction driver (driverGen), kept
+  // in state so it's visible/regenerable and reused across a run's attempts —
+  // exactly like the loopback validator, but graded in the browser. Authored by
+  // the same strong `validatorModel` (both are grader-side).
+  const [driverBody, setDriverBody] = useState<string | null>(null);
+  const [driverSpec, setDriverSpec] = useState<string | null>(null);
+  const [driverGenModel, setDriverGenModel] = useState<string | null>(null);
+  const [driverCheckNames, setDriverCheckNames] = useState<string[]>([]);
+  const [driverUsage, setDriverUsage] = useState<AttemptUsage | null>(null);
+  const [generatingDriver, setGeneratingDriver] = useState(false);
+  const [driverError, setDriverError] = useState<string | null>(null);
+
   const abortRef = useRef<AbortController | null>(null);
 
   // Re-grade state: run the CURRENT validator against the still-running converged
@@ -91,6 +120,12 @@ function App() {
   useEffect(() => {
     localStorage.setItem(API_KEY_STORAGE_KEY, apiKey);
   }, [apiKey]);
+
+  const activePreset = SPEC_PRESETS.find((p) => p.spec === spec);
+  // Grade the UI in the browser when the spec is a known frontend preset. For a
+  // custom (unmatched) spec we can't know, so we attempt it — the model-authored
+  // driver self-guards with a `no-interactive-ui` pass if there's nothing to drive.
+  const gradeUI = activePreset ? activePreset.frontend === true : true;
 
   async function generate(): Promise<string> {
     setGeneratingValidator(true);
@@ -141,6 +176,50 @@ function App() {
     return validatorScript;
   }
 
+  async function generateDriverScript(): Promise<string> {
+    setGeneratingDriver(true);
+    setDriverError(null);
+    const startedAt = performance.now();
+    try {
+      const gen = await generateDriver(apiKey, validatorModel, spec);
+      setDriverBody(gen.driverBody);
+      setDriverSpec(spec);
+      setDriverGenModel(validatorModel);
+      setDriverCheckNames(gen.checkNames);
+      setDriverUsage({
+        inputTokens: gen.inputTokens,
+        outputTokens: gen.outputTokens,
+        elapsedMs: performance.now() - startedAt,
+      });
+      return gen.driverBody;
+    } finally {
+      setGeneratingDriver(false);
+    }
+  }
+
+  async function ensureDriverScript(): Promise<string> {
+    if (
+      driverBody === null ||
+      driverSpec !== spec ||
+      driverGenModel !== validatorModel
+    ) {
+      return generateDriverScript();
+    }
+    return driverBody;
+  }
+
+  async function handleRegenerateDriver() {
+    if (!apiKey.trim()) {
+      setDriverError("Enter your Anthropic API key first.");
+      return;
+    }
+    try {
+      await generateDriverScript();
+    } catch (err) {
+      setDriverError((err as Error).message);
+    }
+  }
+
   async function handleStart() {
     if (!apiKey.trim()) {
       setRunError("Enter your Anthropic API key first.");
@@ -160,9 +239,11 @@ function App() {
     abortRef.current = controller;
 
     try {
-      // Phase 1: (re)generate the validator unless we already have one for this
-      // exact spec text. Phase 2: run the loop against that fixed validator.
+      // Phase 1: (re)generate the graders unless we already have them for this
+      // exact spec text — the loopback validator always, the interaction driver
+      // only when interaction grading is on. Phase 2: run the loop against them.
       const script = await ensureValidatorScript();
+      const driver = gradeUI ? await ensureDriverScript() : undefined;
 
       const result = await runAgentLoop({
         apiKey,
@@ -175,6 +256,8 @@ function App() {
         fuzz: fuzzProbe,
         fuzzPath: previewPath,
         clientErrors: clientErrorProbe,
+        interactionDriver: driver,
+        interactionPath: activePreset?.driverPath ?? "/",
         signal: controller.signal,
         onAttempt: (attempt) => {
           setAttempts((prev) => {
@@ -247,6 +330,10 @@ function App() {
 
     try {
       const script = await ensureValidatorScript();
+      // Batch must grade the UI too — the interaction driver runs in its own
+      // hidden iframe (not the visible preview), so it works here, and without
+      // it a frontend spec's "converged" would mean only the server was right.
+      const driver = gradeUI ? await ensureDriverScript() : undefined;
 
       const results = await runBatch({
         apiKey,
@@ -258,6 +345,8 @@ function App() {
         offlineInstall: offlineProbe,
         fuzz: fuzzProbe,
         fuzzPath: previewPath,
+        interactionDriver: driver,
+        interactionPath: activePreset?.driverPath ?? "/",
         runs: batchRuns,
         signal: controller.signal,
         onRunStart: (runIndex) => {
@@ -305,11 +394,14 @@ function App() {
   return (
     <div className="app">
       <header className="app__header">
-        <h1>Self-Healing App Builder</h1>
-        <p className="app__subtitle">
-          Claude writes a small app, runs it for real in a WebContainer, and
-          patches it against its own errors — no backend involved.
-        </p>
+        <div>
+          <h1>Self-Healing App Builder</h1>
+          <p className="app__subtitle">
+            Claude writes a small app, runs it for real in a WebContainer, and
+            patches it against its own errors — no backend involved.
+          </p>
+        </div>
+        <ThemeToggle />
       </header>
 
       <div className="app__config">
@@ -340,11 +432,11 @@ function App() {
         </label>
 
         <label className="field">
-          <span>Validator model</span>
+          <span>Grader model</span>
           <select
             value={validatorModel}
             onChange={(e) => setValidatorModel(e.target.value)}
-            disabled={running || generatingValidator}
+            disabled={running || generatingValidator || generatingDriver}
           >
             {MODELS.map((m) => (
               <option key={m} value={m}>
@@ -355,8 +447,8 @@ function App() {
         </label>
 
         <p className="app__hint">
-          The builder writes the app every attempt; the validator author writes
-          the grader once.
+          The builder writes the app every attempt; the grader model authors both
+          graders once — the loopback validator and the interaction driver.
         </p>
 
         <label className="field field--spec">
@@ -499,54 +591,125 @@ function App() {
         )}
       </div>
 
-      <section className="app__validator">
-        <div className="validator__header">
-          <h2>Validator</h2>
-          <button
-            onClick={handleRegenerate}
-            className="button--secondary"
-            disabled={running || generatingValidator}
-          >
-            {generatingValidator ? "Generating…" : "Regenerate"}
-          </button>
-        </div>
-        <p className="validator__hint">
-          Generated once from the spec, then run deterministically against every
-          attempt. Edit the spec and regenerate to grade a different app.
-        </p>
-        {validatorError && <p className="app__error">{validatorError}</p>}
-        {generatingValidator && !validatorScript && (
-          <p className="validator__empty">Generating validator…</p>
-        )}
-        {!generatingValidator && !validatorScript && !validatorError && (
-          <p className="validator__empty">
-            No validator yet — generated automatically when you Build.
+      <section className="graders">
+        <div className="graders__intro">
+          <h2>Graders</h2>
+          <p>
+            How each attempt is judged — both authored once from the spec by the
+            grader model, then run deterministically every attempt. The validator
+            grades the server over loopback HTTP; the interaction driver grades
+            the rendered UI in the browser.
           </p>
-        )}
-        {validatorScript && (
-          <>
-            {validatorCheckNames.length > 0 && (
-              <ul className="validator__checks">
-                {validatorCheckNames.map((name) => (
-                  <li key={name} className="validator__check-chip">
-                    {name}
-                  </li>
-                ))}
-              </ul>
+        </div>
+        <div className="graders__grid">
+          <div className="panel">
+            <div className="panel__header">
+              <div className="panel__title">
+                <h3>Validator</h3>
+                <span className="panel__where">server · HTTP</span>
+              </div>
+              <button
+                onClick={handleRegenerate}
+                className="button--secondary"
+                disabled={running || generatingValidator}
+              >
+                {generatingValidator ? "Generating…" : "Regenerate"}
+              </button>
+            </div>
+            <p className="panel__hint">
+              Probes the running server's real responses. Edit the spec and
+              regenerate to grade a different app.
+            </p>
+            {validatorError && <p className="app__error">{validatorError}</p>}
+            {generatingValidator && !validatorScript && (
+              <p className="panel__empty">Generating validator…</p>
             )}
-            <details className="validator__script">
-              <summary>Validator script</summary>
-              <pre>{validatorScript}</pre>
-            </details>
-            {validatorUsage && (
-              <p className="validator__usage">
-                {(validatorUsage.elapsedMs / 1000).toFixed(1)}s ·{" "}
-                {validatorUsage.inputTokens} in / {validatorUsage.outputTokens}{" "}
-                out tokens
+            {!generatingValidator && !validatorScript && !validatorError && (
+              <p className="panel__empty">
+                No validator yet — generated automatically when you Build.
               </p>
             )}
-          </>
-        )}
+            {validatorScript && (
+              <>
+                {validatorCheckNames.length > 0 && (
+                  <ul className="panel__checks">
+                    {validatorCheckNames.map((name) => (
+                      <li key={name} className="panel__check-chip">
+                        {name}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <details className="panel__script">
+                  <summary>Validator script</summary>
+                  <pre>{validatorScript}</pre>
+                </details>
+                {validatorUsage && (
+                  <p className="panel__usage">
+                    {(validatorUsage.elapsedMs / 1000).toFixed(1)}s ·{" "}
+                    {validatorUsage.inputTokens} in /{" "}
+                    {validatorUsage.outputTokens} out tokens
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+
+          {gradeUI && (
+            <div className="panel">
+              <div className="panel__header">
+                <div className="panel__title">
+                  <h3>Interaction driver</h3>
+                  <span className="panel__where">browser · DOM</span>
+                </div>
+                <button
+                  onClick={handleRegenerateDriver}
+                  className="button--secondary"
+                  disabled={running || generatingDriver}
+                >
+                  {generatingDriver ? "Generating…" : "Regenerate"}
+                </button>
+              </div>
+              <p className="panel__hint">
+                Drives the real UI (type, click, toggle) and asserts on the
+                rendered DOM — the layer the loopback validator can't see.
+              </p>
+              {driverError && <p className="app__error">{driverError}</p>}
+              {generatingDriver && !driverBody && (
+                <p className="panel__empty">Generating interaction driver…</p>
+              )}
+              {!generatingDriver && !driverBody && !driverError && (
+                <p className="panel__empty">
+                  No driver yet — authored automatically when you Build.
+                </p>
+              )}
+              {driverBody && (
+                <>
+                  {driverCheckNames.length > 0 && (
+                    <ul className="panel__checks">
+                      {driverCheckNames.map((name) => (
+                        <li key={name} className="panel__check-chip">
+                          {name}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <details className="panel__script">
+                    <summary>Driver script</summary>
+                    <pre>{driverBody}</pre>
+                  </details>
+                  {driverUsage && (
+                    <p className="panel__usage">
+                      {(driverUsage.elapsedMs / 1000).toFixed(1)}s ·{" "}
+                      {driverUsage.inputTokens} in / {driverUsage.outputTokens}{" "}
+                      out tokens
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </div>
       </section>
 
       <main className="app__body">
@@ -562,6 +725,7 @@ function App() {
         <section className="app__stats">
           <RunStats running={running && !selectedRun} attempts={displayAttempts} />
           <HealingTimeline attempts={displayAttempts} />
+          <PreviewReplay attempts={displayAttempts} />
           <AttemptDiff attempts={displayAttempts} />
           {batchResults.length > 0 && (
             <div className="app__batch">

@@ -30,6 +30,8 @@ The script contract:
 
 Derive checks that pin down correctness thoroughly: happy path, boundaries (first/last/past-the-end), and invalid input (expected error status). Prefer several small named checks over one big one, so a partial fix is visible.
 
+Grade what the server SERVES, never how the code is written. For an HTML page, check only wire-level facts: status, content type, and that the elements the spec names (by id/tag/text) are present in the markup. NEVER grep the page's inline script or CSS for implementation details — no checks for a particular function, API call, event handler, class name, or style spelling (e.g. do not assert the script contains "fetch" or "line-through"). A correct app can implement those many ways, and a string match fails correct code and forces the generator to churn. Client-side behavior and styling (what happens on click, what renders after load) are graded separately by a browser-based interaction driver, so leave them out entirely.
+
 Worked example — for the spec "GET /items?page&limit paginated over 47 in-memory items, default page 1 limit 10, positive integers only (else 400), shape { page, limit, total, items }, past-the-last-page returns empty items with 200":
 
 \`\`\`json
@@ -100,7 +102,8 @@ console.log(JSON.stringify({ checks: results }));
 \`\`\``;
 
 const JSON_BLOCK_RE = /```json\s*\n([\s\S]*?)```/;
-const JS_BLOCK_RE = /```(?:javascript|js)\s*\n([\s\S]*?)```/;
+// Closing fence optional: a response truncated at max_tokens still has a usable opening fence.
+const JS_BLOCK_RE = /```(?:javascript|js)\s*\n([\s\S]*?)(?:```|$)/;
 
 /**
  * Mode A: one AI call turns a freeform spec into a deterministic validator
@@ -116,7 +119,7 @@ export async function generateValidator(
 
   const response = await client.messages.create({
     model,
-    max_tokens: 4000,
+    max_tokens: 8000,
     system: VALIDATOR_SYSTEM_PROMPT,
     messages: [{ role: "user", content: `Spec:\n\n${spec}` }],
   });
@@ -129,7 +132,7 @@ export async function generateValidator(
   const scriptMatch = rawText.match(JS_BLOCK_RE);
   if (!scriptMatch) {
     throw new Error(
-      "Validator generation did not return a JavaScript code block. Try Regenerate.",
+      `Validator generation did not return a JavaScript code block (stop_reason: ${response.stop_reason}). Try Regenerate. Response began: ${rawText.slice(0, 200) || "(empty)"}`,
     );
   }
   const script = scriptMatch[1].trimEnd();
