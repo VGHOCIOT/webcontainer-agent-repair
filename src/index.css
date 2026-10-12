@@ -1,11 +1,115 @@
+/* ---- Design tokens ---------------------------------------------------------
+   One source of truth for color, radius, and control sizing. Light is the
+   default (:root); dark applies either when the OS prefers it AND the user
+   hasn't chosen (:root:not([data-theme])), or when the theme toggle sets
+   [data-theme="dark"]. Every component reads these — no hardcoded hex in
+   App.css — so both themes stay correct and the toggle actually works. */
 :root {
-  --muted: #8a8a8a;
-  color-scheme: light dark;
+  /* radii */
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 8px;
+  --radius-pill: 999px;
+
+  /* control sizing */
+  --control-pad-y: 0.55rem;
+  --control-pad-x: 1.3rem;
+  --control-pad-y-sm: 0.3rem;
+  --control-pad-x-sm: 0.85rem;
+
+  /* light theme (default) */
+  --bg: #ffffff;
+  --fg: #1b1f24;
+  --muted: #656d76;
+  --surface: #ffffff;
+  --surface-raised: #f4f5f7;
+  --code-bg: #f6f8fa;
+  --code-fg: #24292f;
+  --border: #d5dae0;
+  --border-strong: #b8c0c9;
+
+  --accent: #6d5bff;
+  --accent-hover: #5b49f0;
+  --accent-contrast: #ffffff;
+  --accent-soft: rgba(109, 91, 255, 0.12);
+  --accent-soft-fg: #5b49f0;
+
+  --pass: #1a7f37;
+  --pass-soft: rgba(26, 127, 55, 0.12);
+  --fail: #cf222e;
+  --fail-soft: rgba(207, 34, 46, 0.1);
+  --warn: #bc4c00;
+  --warn-soft: rgba(188, 76, 0, 0.12);
+  --info: #0969da;
+  --info-soft: rgba(9, 105, 218, 0.12);
+
+  color-scheme: light;
   font: 16px/1.45 system-ui, "Segoe UI", Roboto, sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Dark palette, shared by "OS dark + no explicit choice" and "toggle = dark". */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --bg: #131417;
+    --fg: #e6e7e9;
+    --muted: #8a9199;
+    --surface: #1a1b1e;
+    --surface-raised: #242529;
+    --code-bg: #1b1c20;
+    --code-fg: #dcdfe4;
+    --border: #33363b;
+    --border-strong: #454951;
+
+    --accent: #6d5bff;
+    --accent-hover: #7d6dff;
+    --accent-contrast: #ffffff;
+    --accent-soft: rgba(109, 91, 255, 0.18);
+    --accent-soft-fg: #a99dff;
+
+    --pass: #4caf50;
+    --pass-soft: rgba(76, 175, 80, 0.15);
+    --fail: #ff6b6b;
+    --fail-soft: rgba(255, 107, 107, 0.15);
+    --warn: #ff9800;
+    --warn-soft: rgba(255, 152, 0, 0.15);
+    --info: #4ea1ff;
+    --info-soft: rgba(78, 161, 255, 0.15);
+
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #131417;
+  --fg: #e6e7e9;
+  --muted: #8a9199;
+  --surface: #1a1b1e;
+  --surface-raised: #242529;
+  --code-bg: #1b1c20;
+  --code-fg: #dcdfe4;
+  --border: #33363b;
+  --border-strong: #454951;
+
+  --accent: #6d5bff;
+  --accent-hover: #7d6dff;
+  --accent-contrast: #ffffff;
+  --accent-soft: rgba(109, 91, 255, 0.18);
+  --accent-soft-fg: #a99dff;
+
+  --pass: #4caf50;
+  --pass-soft: rgba(76, 175, 80, 0.15);
+  --fail: #ff6b6b;
+  --fail-soft: rgba(255, 107, 107, 0.15);
+  --warn: #ff9800;
+  --warn-soft: rgba(255, 152, 0, 0.15);
+  --info: #4ea1ff;
+  --info-soft: rgba(78, 161, 255, 0.15);
+
+  color-scheme: dark;
 }
 
 * {
@@ -14,6 +118,8 @@
 
 body {
   margin: 0;
+  background: var(--bg);
+  color: var(--fg);
 }
 
 #root {

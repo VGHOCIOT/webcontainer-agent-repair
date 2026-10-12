@@ -43,6 +43,10 @@ export interface Attempt {
   // byte-identical files, or the exact same failure. Drives the loop's
   // early-stop guard so a stuck model doesn't burn every iteration.
   stalled?: boolean;
+  // Rendered DOM (outerHTML) the interaction driver captured for this attempt,
+  // for replaying the visual break->heal. Present only when the app ran far
+  // enough for the driver to drive it (a frontend spec past the validator).
+  previewSnapshot?: string;
 }
 
 export type FailureStage = "generation" | "installation" | "startup" | "validation";
