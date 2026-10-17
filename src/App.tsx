@@ -18,6 +18,14 @@ import { DEFAULT_SPEC, FRONTEND_SPEC } from "./lib/spec";
 import { TASKS_SPEC, FILTER_SPEC, SEARCH_SPEC } from "./lib/interactive";
 import { generateDriver } from "./lib/driverGen";
 import { BatchSummary } from "./components/BatchSummary";
+import {
+  buildBatchExport,
+  downloadJson,
+  parseGraderImport,
+  shortHash,
+  type BatchMeta,
+  type GraderRecord,
+} from "./lib/exportResults";
 import type { Attempt, AttemptUsage, BatchRun, StoppedReason, ValidationResult } from "./lib/types";
 
 const API_KEY_STORAGE_KEY = "webcontainer-agent-repair:anthropic-api-key";
@@ -110,6 +118,17 @@ function App() {
 
   const abortRef = useRef<AbortController | null>(null);
 
+  // Provenance of the graders currently in state (check names + authoring usage
+  // + author model), kept in refs because handleBatch reads them in the same
+  // tick the graders are (re)generated — state would still be stale there.
+  const validatorInfoRef = useRef<Omit<GraderRecord, "source" | "hash"> | null>(null);
+  const driverInfoRef = useRef<Omit<GraderRecord, "source" | "hash"> | null>(null);
+  // What the most recent batch actually ran with, captured at batch start so the
+  // exported JSON describes the run even if the UI is changed before Download.
+  const [batchMeta, setBatchMeta] = useState<BatchMeta | null>(null);
+  const [importMessage, setImportMessage] = useState<string | null>(null);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
+
   // Re-grade state: run the CURRENT validator against the still-running converged
   // build (no re-mount — the server is already up), so an edited/regenerated
   // grader can be re-applied to the same app. Answers "does this build still pass
@@ -140,11 +159,13 @@ function App() {
       setValidatorSpec(spec);
       setValidatorGenModel(validatorModel);
       setValidatorCheckNames(gen.checkNames);
-      setValidatorUsage({
+      const usage = {
         inputTokens: gen.inputTokens,
         outputTokens: gen.outputTokens,
         elapsedMs: performance.now() - startedAt,
-      });
+      };
+      setValidatorUsage(usage);
+      validatorInfoRef.current = { checkNames: gen.checkNames, authorModel: validatorModel, usage };
       return gen.script;
     } finally {
       setGeneratingValidator(false);
@@ -186,11 +207,13 @@ function App() {
       setDriverSpec(spec);
       setDriverGenModel(validatorModel);
       setDriverCheckNames(gen.checkNames);
-      setDriverUsage({
+      const usage = {
         inputTokens: gen.inputTokens,
         outputTokens: gen.outputTokens,
         elapsedMs: performance.now() - startedAt,
-      });
+      };
+      setDriverUsage(usage);
+      driverInfoRef.current = { checkNames: gen.checkNames, authorModel: validatorModel, usage };
       return gen.driverBody;
     } finally {
       setGeneratingDriver(false);
@@ -218,6 +241,58 @@ function App() {
     } catch (err) {
       setDriverError((err as Error).message);
     }
+  }
+
+  // Load the graders from a previous batch export so this run is scored by the
+  // IDENTICAL scripts (e.g. the other builder model's cell of the experiment).
+  // Refuses an export authored for a different spec text.
+  async function handleImportGraders(file: File) {
+    setImportMessage(null);
+    try {
+      const imp = parseGraderImport(await file.text());
+      if (imp.specHash !== (await shortHash(spec))) {
+        throw new Error(
+          "Those graders were authored for a different spec than the one currently selected.",
+        );
+      }
+      setPreviewPath(derivePreviewPath(imp.validator.source));
+      setValidatorScript(imp.validator.source);
+      setValidatorSpec(spec);
+      setValidatorGenModel(imp.graderModel);
+      setValidatorCheckNames(imp.validator.checkNames);
+      setValidatorUsage(imp.validator.usage);
+      validatorInfoRef.current = {
+        checkNames: imp.validator.checkNames,
+        authorModel: imp.validator.authorModel,
+        usage: imp.validator.usage,
+      };
+      if (imp.driver) {
+        setDriverBody(imp.driver.source);
+        setDriverSpec(spec);
+        setDriverGenModel(imp.graderModel);
+        setDriverCheckNames(imp.driver.checkNames);
+        setDriverUsage(imp.driver.usage);
+        driverInfoRef.current = {
+          checkNames: imp.driver.checkNames,
+          authorModel: imp.driver.authorModel,
+          usage: imp.driver.usage,
+        };
+      }
+      // Pin the grader-model picker to the author so ensure*() sees them as fresh.
+      setValidatorModel(imp.graderModel);
+      setImportMessage(
+        `Imported validator ${imp.validator.hash}${imp.driver ? ` and driver ${imp.driver.hash}` : ""}.`,
+      );
+    } catch (err) {
+      setImportMessage((err as Error).message);
+    }
+  }
+
+  async function handleDownloadBatch() {
+    if (!batchMeta || batchResults.length === 0) return;
+    const data = await buildBatchExport(batchMeta, batchResults);
+    const slug = (batchMeta.presetName ?? "custom").toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    downloadJson(`batch-${slug}-${batchMeta.builderModel}-${data.config.specHash}.json`, data);
   }
 
   async function handleStart() {
@@ -334,6 +409,35 @@ function App() {
       // hidden iframe (not the visible preview), so it works here, and without
       // it a frontend spec's "converged" would mean only the server was right.
       const driver = gradeUI ? await ensureDriverScript() : undefined;
+
+      const record = async (
+        source: string,
+        info: Omit<GraderRecord, "source" | "hash"> | null,
+      ): Promise<GraderRecord> => ({
+        source,
+        hash: await shortHash(source),
+        checkNames: info?.checkNames ?? [],
+        authorModel: info?.authorModel ?? validatorModel,
+        usage: info?.usage ?? null,
+      });
+      setBatchMeta({
+        presetName: activePreset?.name ?? null,
+        spec,
+        builderModel,
+        graderModel: validatorModel,
+        maxIterations: MAX_ITERATIONS,
+        requestedRuns: batchRuns,
+        perturbations: {
+          port: portProbe,
+          offline: offlineProbe,
+          fuzz: fuzzProbe,
+          clientErrors: false, // the live-preview probe is not run in batch
+        },
+        gradeUI,
+        validator: await record(script, validatorInfoRef.current),
+        driver: driver ? await record(driver, driverInfoRef.current) : null,
+        startedAt: new Date().toISOString(),
+      });
 
       const results = await runBatch({
         apiKey,
@@ -600,6 +704,26 @@ function App() {
             grades the server over loopback HTTP; the interaction driver grades
             the rendered UI in the browser.
           </p>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept="application/json,.json"
+            hidden
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = ""; // allow re-importing the same file
+              if (file) void handleImportGraders(file);
+            }}
+          />
+          <button
+            onClick={() => importInputRef.current?.click()}
+            className="button--secondary"
+            disabled={running || generatingValidator || generatingDriver}
+            title="Reuse the graders from a previous batch export so two runs are scored identically"
+          >
+            Import graders
+          </button>
+          {importMessage && <p className="panel__hint">{importMessage}</p>}
         </div>
         <div className="graders__grid">
           <div className="panel">
@@ -745,6 +869,14 @@ function App() {
                   </button>
                 ))}
               </div>
+              <button
+                onClick={handleDownloadBatch}
+                className="button--secondary"
+                disabled={running || !batchMeta}
+                title="Download every run, attempt, check (with layer), the grader scripts and the config as JSON"
+              >
+                Download results (JSON)
+              </button>
               <BatchSummary runs={batchResults} />
             </div>
           )}

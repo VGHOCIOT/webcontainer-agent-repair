@@ -43,8 +43,21 @@ function buildHarness(driverBody: string): string {
   // timeout/error it's whatever managed to render. Capped so a runaway page
   // can't flood postMessage.
   function capture(){ try { return String(document.documentElement.outerHTML).slice(0, 250000); } catch (e) { return ''; } }
+  // Uncaught exceptions / unhandled rejections thrown by the page while it is
+  // being driven. Listeners go up before the driver runs, so a throw in the
+  // page's own script or in a handler the driver triggers is recorded. Reported
+  // as one extra check on every post (including timeouts), so a "UI looks fine
+  // but the console is throwing" app fails here without a separate probe.
+  var CLIENT_ERRORS = [];
+  window.addEventListener('error', function(ev){ CLIENT_ERRORS.push('uncaught exception: ' + String((ev && ev.message) || ev)); });
+  window.addEventListener('unhandledrejection', function(ev){ var r = ev && ev.reason; CLIENT_ERRORS.push('unhandled promise rejection: ' + String((r && r.message) || r)); });
+  function errorCheck(){
+    return CLIENT_ERRORS.length === 0
+      ? { name: 'frontend: no uncaught client errors', pass: true, details: 'No uncaught exception or unhandled rejection while the page loaded and was driven.' }
+      : { name: 'frontend: no uncaught client errors', pass: false, details: CLIENT_ERRORS.slice(0, 5).join('; ') };
+  }
   var POSTED = false;
-  function post(checks){ if (POSTED) return; POSTED = true; try { window.parent.postMessage({ source: '${DRIVER_MESSAGE_SOURCE}', checks: checks, snapshot: capture() }, '*'); } catch (e) {} }
+  function post(checks){ if (POSTED) return; POSTED = true; try { window.parent.postMessage({ source: '${DRIVER_MESSAGE_SOURCE}', checks: checks.concat([errorCheck()]), snapshot: capture() }, '*'); } catch (e) {} }
   // Per-check isolation. The driver pushes each assertion through check(), so a
   // throw in ONE check (e.g. a missing element on a broken app) becomes a single
   // failing check with granular detail — not a total abort that loses every
