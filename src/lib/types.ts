@@ -17,10 +17,19 @@ export interface AttemptUsage {
   elapsedMs: number;
 }
 
+// Which layer of the app a check exercises — the axis the write-up groups bug
+// classes by. "data" = server responses over loopback (validator, fuzz);
+// "frontend" = behavior that only exists once the browser runs the page
+// (interaction driver, client errors). Install/startup failures aren't checks;
+// they're already classified by FailureStage. Stamped by the agent loop, not by
+// the check authors, so the model-authored scripts keep the plain contract.
+export type CheckLayer = "data" | "frontend";
+
 export interface CheckResult {
   name: string;
   pass: boolean;
   details: string;
+  layer?: CheckLayer;
 }
 
 export interface ValidationResult {

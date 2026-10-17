@@ -18,6 +18,7 @@ import {
 import { drivePreview, registerInteractionDriver } from "./previewDriver";
 import type {
   Attempt,
+  CheckLayer,
   CheckResult,
   FailureStage,
   GeneratedFile,
@@ -36,8 +37,14 @@ interface ProbeContext {
   url: string; // the preview tunnel URL (for browser-side probes)
   previewCheckpoint: number; // performance.now() from just before the preview went live
 }
+// `kind` and `layer` classify every probe on the two axes the write-up uses:
+// grader (defines correctness) vs perturbation (opt-in stressor), and which
+// layer of the app it exercises. The loop stamps `layer` onto each check it
+// returns so exported data can be grouped by layer without parsing names.
 interface CheckProbe {
   id: string;
+  kind: "grader" | "perturbation";
+  layer: CheckLayer;
   run: (ctx: ProbeContext) => Promise<CheckResult[]>;
 }
 
@@ -180,6 +187,8 @@ export async function runAgentLoop({
   if (interactionDriver) {
     checkProbes.push({
       id: "interaction",
+      kind: "grader",
+      layer: "frontend",
       run: async (ctx) => {
         const { checks, snapshot } = await drivePreview(
           ctx.url,
@@ -193,12 +202,16 @@ export async function runAgentLoop({
   if (fuzz) {
     checkProbes.push({
       id: "fuzz",
+      kind: "perturbation",
+      layer: "data",
       run: (ctx) => runFuzz(webcontainer, ctx.port, fuzzPath ?? "/"),
     });
   }
   if (clientErrors) {
     checkProbes.push({
       id: "client-errors",
+      kind: "perturbation",
+      layer: "frontend",
       run: async (ctx) => {
         // Let the preview iframe load + run its client JS, then read what threw.
         await new Promise((resolve) => setTimeout(resolve, PREVIEW_SETTLE_MS));
@@ -360,6 +373,11 @@ export async function runAgentLoop({
       onPreviewUrl(start.url, start.port);
 
       let validation = await validateApp(webcontainer, start.port!, validatorScript);
+      // The generated loopback validator only sees served responses: data layer.
+      validation = {
+        ...validation,
+        checks: validation.checks.map((c) => ({ ...c, layer: "data" as const })),
+      };
 
       // The loopback validator only sees served HTML/JSON. Once it's satisfied,
       // run the post-startup check probes against the live server — the frontend
@@ -375,7 +393,7 @@ export async function runAgentLoop({
           previewCheckpoint: previewAt,
         };
         for (const probe of checkProbes) {
-          const checks = await probe.run(ctx);
+          const checks = (await probe.run(ctx)).map((c) => ({ ...c, layer: probe.layer }));
           validation = aggregateChecks([...validation.checks, ...checks]);
           if (!validation.pass) break;
         }
