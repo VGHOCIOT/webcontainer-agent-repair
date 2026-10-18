@@ -28,10 +28,13 @@ export interface BatchMeta {
   graderModel: string;
   maxIterations: number;
   requestedRuns: number;
-  perturbations: { port: boolean; offline: boolean; fuzz: boolean; clientErrors: boolean };
+  perturbations: { port: boolean; offline: boolean; fuzz: boolean };
   gradeUI: boolean;
   validator: GraderRecord;
   driver: GraderRecord | null;
+  // Result of running these exact graders against a known-good reference app
+  // before the batch (see qualify.ts). "no-reference" = custom spec, unqualified.
+  qualification: { status: string; failingChecks: string[] };
   startedAt: string;
 }
 
