@@ -9,12 +9,6 @@ import {
   runInstall,
   runStart,
 } from "./webcontainer";
-import {
-  collectPreviewErrors,
-  initPreviewErrorCapture,
-  previewErrorChecks,
-  previewErrorCheckpoint,
-} from "./previewErrors";
 import { drivePreview, registerInteractionDriver } from "./previewDriver";
 import type {
   Attempt,
@@ -35,7 +29,6 @@ const MAX_STALLS = 2;
 interface ProbeContext {
   port: number;
   url: string; // the preview tunnel URL (for browser-side probes)
-  previewCheckpoint: number; // performance.now() from just before the preview went live
 }
 // `kind` and `layer` classify every probe on the two axes the write-up uses:
 // grader (defines correctness) vs perturbation (opt-in stressor), and which
@@ -47,12 +40,6 @@ interface CheckProbe {
   layer: CheckLayer;
   run: (ctx: ProbeContext) => Promise<CheckResult[]>;
 }
-
-// How long to let the live preview iframe load and run its client JS before
-// collecting any uncaught client errors. Only paid when the client-error probe
-// is on (see `clientErrors` below); a value this size comfortably covers React
-// render latency + the iframe fetching and executing the page's inline script.
-const PREVIEW_SETTLE_MS = 2_000;
 
 function truncate(text: string, maxChars = 4000): string {
   if (text.length <= maxChars) return text;
@@ -105,14 +92,11 @@ export interface RunAgentLoopOptions {
   // Path the interaction driver loads the app at (its representative page).
   // Defaults to `fuzzPath` then "/". Ignored unless `interactionDriver` is set.
   interactionPath?: string;
-  // Environment perturbation: after the generated validator passes, give the
-  // live preview iframe a moment to load and then fail the attempt if the page
-  // threw an uncaught exception / unhandled rejection in the BROWSER. Catches a
-  // "server healthy, client throwing" bug the loopback validator can't see.
-  // Timing-dependent on a live preview iframe, so it's meaningful for the
-  // interactive Build path — NOT batch, where no preview is rendered (see the
-  // note where it's consumed).
-  clientErrors?: boolean;
+  // Grader qualification (see qualify.ts): bypass the model and run THESE files
+  // through the normal install/start/validate/probe pipeline instead. Used with
+  // a known-good reference app and maxIterations 1 to test the graders
+  // themselves; the builder is never called.
+  fixedFiles?: GeneratedFile[];
   // Interactive runs leave the converged server listening so its preview stays
   // live. Batch runs must set this false: an orphaned server keeps holding the
   // port and the next run's startup then fails with EADDRINUSE, corrupting the
@@ -152,9 +136,9 @@ export async function runAgentLoop({
   offlineInstall,
   fuzz,
   fuzzPath,
-  clientErrors,
   interactionDriver,
   interactionPath,
+  fixedFiles,
   keepServerAlive = true,
   onAttempt,
   onPreviewUrl,
@@ -165,7 +149,6 @@ export async function runAgentLoop({
     liveServer.kill();
     liveServer = null;
   }
-  if (clientErrors) initPreviewErrorCapture(webcontainer);
   // Register the interaction driver once — setPreviewScript applies to every
   // subsequent preview load for the session, so it need not be re-set per attempt.
   if (interactionDriver) await registerInteractionDriver(webcontainer, interactionDriver);
@@ -175,7 +158,7 @@ export async function runAgentLoop({
   // passes, the loop runs these against the live server and short-circuits on
   // the first failure. This is the single place checks are composed — the
   // frontend grader (interaction driver) and the opt-in perturbations
-  // (fuzz, client-errors) are uniform here, so adding a check is one push, not
+  // (fuzz) are uniform here, so adding a check is one push, not
   // another bespoke stage. (PORT/offline are stage modifiers on install/startup,
   // not post-validation check producers, so they live elsewhere.)
   // The interaction driver also captures a snapshot of the rendered DOM; the
@@ -207,18 +190,6 @@ export async function runAgentLoop({
       run: (ctx) => runFuzz(webcontainer, ctx.port, fuzzPath ?? "/"),
     });
   }
-  if (clientErrors) {
-    checkProbes.push({
-      id: "client-errors",
-      kind: "perturbation",
-      layer: "frontend",
-      run: async (ctx) => {
-        // Let the preview iframe load + run its client JS, then read what threw.
-        await new Promise((resolve) => setTimeout(resolve, PREVIEW_SETTLE_MS));
-        return previewErrorChecks(collectPreviewErrors(ctx.port, ctx.previewCheckpoint));
-      },
-    });
-  }
 
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: spec }];
   const attempts: Attempt[] = [];
@@ -245,7 +216,9 @@ export async function runAgentLoop({
     const startedAt = performance.now();
     let gen: Awaited<ReturnType<typeof generateCode>>;
     try {
-      gen = await generateCode(apiKey, model, messages);
+      gen = fixedFiles
+        ? { files: fixedFiles, rawText: "", inputTokens: 0, outputTokens: 0 }
+        : await generateCode(apiKey, model, messages);
     } catch (err) {
       attempt = {
         ...attempt,
@@ -367,9 +340,6 @@ export async function runAgentLoop({
 
       attempt = { ...attempt, runLog, status: "validating" };
       onAttempt(attempt);
-      // Checkpoint before the preview goes live so a later collection only sees
-      // client errors from THIS attempt's page, not a prior attempt's.
-      const previewAt = previewErrorCheckpoint();
       onPreviewUrl(start.url, start.port);
 
       let validation = await validateApp(webcontainer, start.port!, validatorScript);
@@ -390,7 +360,6 @@ export async function runAgentLoop({
         const ctx: ProbeContext = {
           port: start.port!,
           url: start.url,
-          previewCheckpoint: previewAt,
         };
         for (const probe of checkProbes) {
           const checks = (await probe.run(ctx)).map((c) => ({ ...c, layer: probe.layer }));

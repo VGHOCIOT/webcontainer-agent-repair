@@ -17,6 +17,7 @@ import { derivePreviewPath } from "./lib/preview";
 import { DEFAULT_SPEC, FRONTEND_SPEC } from "./lib/spec";
 import { TASKS_SPEC, FILTER_SPEC, SEARCH_SPEC } from "./lib/interactive";
 import { generateDriver } from "./lib/driverGen";
+import { qualifyGraders, type Qualification } from "./lib/qualify";
 import { BatchSummary } from "./components/BatchSummary";
 import {
   buildBatchExport,
@@ -73,7 +74,6 @@ function App() {
   const [portProbe, setPortProbe] = useState(false);
   const [offlineProbe, setOfflineProbe] = useState(false);
   const [fuzzProbe, setFuzzProbe] = useState(false);
-  const [clientErrorProbe, setClientErrorProbe] = useState(false);
   const [attempts, setAttempts] = useState<Attempt[]>([]);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewPort, setPreviewPort] = useState<number | null>(null);
@@ -128,6 +128,9 @@ function App() {
   const [batchMeta, setBatchMeta] = useState<BatchMeta | null>(null);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  // Outcome of running the current graders against the spec's reference app.
+  // Cleared whenever the graders change, since it describes specific scripts.
+  const [qualification, setQualification] = useState<Qualification | null>(null);
 
   // Re-grade state: run the CURRENT validator against the still-running converged
   // build (no re-mount — the server is already up), so an edited/regenerated
@@ -154,6 +157,7 @@ function App() {
       const gen = await generateValidator(apiKey, validatorModel, spec);
       // Reuse the just-generated validator to pick the preview path — the
       // endpoints it probes are the app's real, representative URLs.
+      setQualification(null);
       setPreviewPath(derivePreviewPath(gen.script));
       setValidatorScript(gen.script);
       setValidatorSpec(spec);
@@ -203,6 +207,7 @@ function App() {
     const startedAt = performance.now();
     try {
       const gen = await generateDriver(apiKey, validatorModel, spec);
+      setQualification(null);
       setDriverBody(gen.driverBody);
       setDriverSpec(spec);
       setDriverGenModel(validatorModel);
@@ -255,6 +260,7 @@ function App() {
           "Those graders were authored for a different spec than the one currently selected.",
         );
       }
+      setQualification(null);
       setPreviewPath(derivePreviewPath(imp.validator.source));
       setValidatorScript(imp.validator.source);
       setValidatorSpec(spec);
@@ -286,6 +292,19 @@ function App() {
     } catch (err) {
       setImportMessage((err as Error).message);
     }
+  }
+
+  // Run the given graders against the spec's reference app. Called by the batch
+  // gate; the result is kept in state so it shows in the Graders section.
+  async function runQualification(script: string, driver: string | undefined) {
+    const q = await qualifyGraders({
+      spec,
+      validatorScript: script,
+      interactionDriver: driver,
+      interactionPath: activePreset?.driverPath ?? "/",
+    });
+    setQualification(q);
+    return q;
   }
 
   async function handleDownloadBatch() {
@@ -330,7 +349,6 @@ function App() {
         offlineInstall: offlineProbe,
         fuzz: fuzzProbe,
         fuzzPath: previewPath,
-        clientErrors: clientErrorProbe,
         interactionDriver: driver,
         interactionPath: activePreset?.driverPath ?? "/",
         signal: controller.signal,
@@ -410,6 +428,15 @@ function App() {
       // it a frontend spec's "converged" would mean only the server was right.
       const driver = gradeUI ? await ensureDriverScript() : undefined;
 
+      // Gate: the graders must pass the known-good reference app before they're
+      // allowed to score a builder. A custom spec has no reference and proceeds,
+      // recorded as unqualified in the export.
+      const q = await runQualification(script, driver);
+      if (q.status !== "qualified" && q.status !== "no-reference") {
+        setRunError(`Batch not started — grader qualification ${q.status}. ${q.message}`);
+        return;
+      }
+
       const record = async (
         source: string,
         info: Omit<GraderRecord, "source" | "hash"> | null,
@@ -431,11 +458,17 @@ function App() {
           port: portProbe,
           offline: offlineProbe,
           fuzz: fuzzProbe,
-          clientErrors: false, // the live-preview probe is not run in batch
         },
         gradeUI,
         validator: await record(script, validatorInfoRef.current),
         driver: driver ? await record(driver, driverInfoRef.current) : null,
+        qualification: {
+          status: q.status,
+          failingChecks: [
+            ...q.failing.map((c) => c.name),
+            ...q.missedMutants.map((m) => `passed known-bad variant: ${m}`),
+          ],
+        },
         startedAt: new Date().toISOString(),
       });
 
@@ -621,22 +654,6 @@ function App() {
           </span>
         </label>
 
-        <label className="app__probe">
-          <input
-            type="checkbox"
-            checked={clientErrorProbe}
-            onChange={(e) => setClientErrorProbe(e.target.checked)}
-            disabled={running}
-          />
-          <span>
-            Client-error probe — after the validator passes, watch the live
-            preview for an uncaught exception or unhandled rejection in the
-            browser; a page that throws fails the attempt (catches "server
-            healthy, client throwing" bugs the loopback validator can't see).
-            Build only — batch runs render no preview.
-          </span>
-        </label>
-
         <div className="app__actions">
           <button onClick={handleStart} disabled={running}>
             {running ? "Running…" : "Build"}
@@ -723,6 +740,15 @@ function App() {
           >
             Import graders
           </button>
+          {qualification && (
+            <div
+              className={`app__regrade-result app__regrade-result--${
+                qualification.status === "qualified" ? "pass" : "fail"
+              }`}
+            >
+              <strong>{qualification.status}:</strong> {qualification.message}
+            </div>
+          )}
           {importMessage && <p className="panel__hint">{importMessage}</p>}
         </div>
         <div className="graders__grid">
