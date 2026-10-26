@@ -126,6 +126,25 @@ async function runToCompletion(
   return process.exit;
 }
 
+/**
+ * Returns the project directory to empty: removes the files a previous run wrote
+ * plus what `npm install` left behind. `mount` merges and never deletes, so
+ * without this every run would start on top of the last one's leftovers — runs
+ * are meant to be independent samples, and a stale file or a populated
+ * node_modules (which would also let an `--offline` install succeed on a package
+ * the new run never fetched) could change how a build behaves.
+ */
+export async function clearProject(
+  webcontainer: WebContainer,
+  writtenFiles: GeneratedFile[],
+): Promise<void> {
+  for (const { path } of writtenFiles) {
+    await webcontainer.fs.rm(path, { force: true });
+  }
+  await webcontainer.fs.rm("node_modules", { recursive: true, force: true });
+  await webcontainer.fs.rm("package-lock.json", { force: true });
+}
+
 export async function runInstall(
   webcontainer: WebContainer,
   onOutput: (chunk: string) => void,

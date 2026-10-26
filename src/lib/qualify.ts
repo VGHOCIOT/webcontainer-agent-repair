@@ -131,3 +131,29 @@ export async function qualifyGraders(opts: {
     message: `Graders passed the reference app (${checks.length} checks) and failed all ${mutants.length} known-broken variants.`,
   };
 }
+
+// How many times a batch will author-and-qualify graders before giving up.
+// Regeneration is non-deterministic, so one rejection is routine (Task filter
+// took three tries once); a spec that can't qualify in this many is a real
+// problem to look at, not something to loop on.
+export const QUALIFY_MAX_TRIES = 3;
+
+/**
+ * Which graders to regenerate after a failed qualification. A reference-app
+ * failure names the failing checks, and each check carries its layer, so only
+ * the grader that produced them is replaced (a good grader isn't thrown away).
+ * A too-lenient result can't be pinned on one grader — every check passed — so
+ * both are replaced. `error` is a fixture bug and never retried (null).
+ */
+export function gradersToRegenerate(
+  q: Qualification,
+): { validator: boolean; driver: boolean } | null {
+  if (q.status === "qualified" || q.status === "no-reference" || q.status === "error") return null;
+  if (q.status === "rejected" && q.failing.length > 0) {
+    return {
+      validator: q.failing.some((c) => c.layer !== "frontend"),
+      driver: q.failing.some((c) => c.layer === "frontend"),
+    };
+  }
+  return { validator: true, driver: true };
+}

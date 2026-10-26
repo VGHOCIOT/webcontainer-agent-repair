@@ -1,5 +1,5 @@
 import { computeBatchSummary } from "./stats";
-import type { BatchRun, CheckLayer, FailureStage, StoppedReason } from "./types";
+import type { BatchArm, BatchRun, CheckLayer, FailureStage, StoppedReason } from "./types";
 
 // Reproducible, user-initiated export of a batch (the only way data leaves the
 // tab — no persisted store). It carries everything needed to compare cells of an
@@ -29,12 +29,19 @@ export interface BatchMeta {
   maxIterations: number;
   requestedRuns: number;
   perturbations: { port: boolean; offline: boolean; fuzz: boolean };
+  // Which arms this batch ran for every run index: "feedback" = the healing loop
+  // (retries see the previous code + error), "spec-only" = the control (every
+  // attempt an independent fresh sample). Both = a paired batch, scored by these
+  // same graders.
+  arms: BatchArm[];
   gradeUI: boolean;
   validator: GraderRecord;
   driver: GraderRecord | null;
   // Result of running these exact graders against a known-good reference app
   // before the batch (see qualify.ts). "no-reference" = custom spec, unqualified.
-  qualification: { status: string; failingChecks: string[] };
+  // `tries` is how many author-and-qualify rounds it took (a grader rejection
+  // rate is itself a result); `rejectedTries` is why each earlier round failed.
+  qualification: { status: string; failingChecks: string[]; tries: number; rejectedTries: string[] };
   startedAt: string;
 }
 
@@ -61,6 +68,7 @@ export interface ExportedAttempt {
 
 export interface ExportedRun {
   index: number;
+  arm: BatchArm;
   stoppedReason: StoppedReason;
   attempts: ExportedAttempt[];
 }
@@ -70,7 +78,8 @@ export interface BatchExport {
   exportedAt: string;
   config: Omit<BatchMeta, "validator" | "driver"> & { specHash: string };
   graders: { validator: GraderRecord; driver: GraderRecord | null };
-  summary: ReturnType<typeof computeBatchSummary>;
+  // One summary per arm that ran — never pooled across arms.
+  summaries: Partial<Record<BatchArm, ReturnType<typeof computeBatchSummary>>>;
   runs: ExportedRun[];
 }
 
@@ -108,7 +117,7 @@ export async function buildBatchExport(meta: BatchMeta, runs: BatchRun[]): Promi
         })),
       });
     }
-    exportedRuns.push({ index: run.index, stoppedReason: run.stoppedReason, attempts });
+    exportedRuns.push({ index: run.index, arm: run.arm, stoppedReason: run.stoppedReason, attempts });
   }
 
   const { validator, driver, ...config } = meta;
@@ -117,7 +126,11 @@ export async function buildBatchExport(meta: BatchMeta, runs: BatchRun[]): Promi
     exportedAt: new Date().toISOString(),
     config: { ...config, specHash: await shortHash(meta.spec) },
     graders: { validator, driver },
-    summary: computeBatchSummary(runs),
+    summaries: Object.fromEntries(
+      (["feedback", "spec-only"] as BatchArm[])
+        .filter((arm) => runs.some((r) => r.arm === arm))
+        .map((arm) => [arm, computeBatchSummary(runs.filter((r) => r.arm === arm))]),
+    ),
     runs: exportedRuns,
   };
 }
