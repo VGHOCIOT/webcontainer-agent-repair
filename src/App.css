@@ -28,14 +28,15 @@
 }
 
 /* ---- Standardized controls -------------------------------------------------
-   Every button is one of: primary (accent fill), secondary (accent outline),
-   or ghost (quiet). Size comes from context (large in the action bar, small in
-   panel headers); variant only sets color. Pills use --radius-pill, chips
-   --radius-sm — consistently, everywhere. */
+   Buttons are `.btn` plus ONE variant — `.btn--primary` (accent fill) or
+   `.btn--secondary` (accent outline) — plus an optional `.btn--sm`. Variants are
+   explicit classes only: never style buttons through a contextual selector
+   (`.panel button`, `.actions button`), because that outranks a variant class
+   and silently drops its border, which is how buttons ended up with no outline.
+   `.theme-toggle` is the quiet ghost. `.toggle-chip` is the pill used for both
+   single-choice (spec presets) and multi-choice (batch arms) toggles. Pills use
+   --radius-pill, rectangular chips --radius-sm. */
 .btn,
-.button--secondary,
-.app__actions button,
-.panel__header button,
 .theme-toggle {
   font: inherit;
   cursor: pointer;
@@ -45,20 +46,70 @@
   transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
 }
 
-button:disabled {
-  opacity: 0.5;
-  cursor: default;
+.btn {
+  padding: var(--control-pad-y) var(--control-pad-x);
+  font-weight: 600;
+  white-space: nowrap;
 }
 
-/* Primary + secondary variants */
-.button--secondary {
+.btn--sm {
+  padding: var(--control-pad-y-sm) var(--control-pad-x-sm);
+  font-size: 0.8rem;
+}
+
+.btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.btn--secondary {
   background: transparent;
   border-color: var(--accent);
   color: var(--accent);
 }
 
-.button--secondary:hover:not(:disabled) {
+.btn--secondary:hover:not(:disabled) {
   background: var(--accent-soft);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.toggle-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.toggle-chip {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.3rem 0.8rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.toggle-chip:hover:not(:disabled) {
+  color: var(--fg);
+}
+
+.toggle-chip[aria-pressed="true"] {
+  border-color: var(--info);
+  background: var(--info-soft);
+  color: var(--info);
+  font-weight: 600;
 }
 
 .theme-toggle {
@@ -73,13 +124,6 @@ button:disabled {
 
 .theme-toggle:hover {
   border-color: var(--border-strong);
-}
-
-.app__config {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1rem;
-  align-items: start;
 }
 
 .field {
@@ -110,55 +154,6 @@ button:disabled {
   outline: 2px solid var(--accent);
   outline-offset: -1px;
   border-color: var(--accent);
-}
-
-.field--spec {
-  grid-column: 1 / -1;
-}
-
-.app__hint {
-  grid-column: 1 / -1;
-  margin: 0;
-  font-size: 0.75rem;
-  color: var(--muted);
-}
-
-.app__probe {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: flex-start;
-  gap: 0.5rem;
-  font-size: 0.75rem;
-  color: var(--muted);
-}
-
-.app__probe input {
-  margin-top: 0.15rem;
-}
-
-.app__probe code {
-  font-family: ui-monospace, monospace;
-}
-
-.app__batch-control {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 0.85rem;
-  color: var(--muted);
-}
-
-.app__batch-control input {
-  width: 3.5rem;
-  padding: 0.3rem 0.4rem;
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: var(--surface-raised);
-  color: var(--fg);
-}
-
-.app__batch {
-  margin-top: 1.25rem;
 }
 
 .batch-summary__headline {
@@ -250,33 +245,7 @@ button:disabled {
   color: var(--muted);
 }
 
-.field--spec textarea {
-  font-family: ui-monospace, monospace;
-  font-size: 0.8rem;
-  resize: vertical;
-}
-
-.app__actions {
-  grid-column: 1 / -1;
-  display: flex;
-  gap: 0.75rem;
-}
-
-.app__actions button {
-  padding: var(--control-pad-y) var(--control-pad-x);
-  font-weight: 600;
-}
-
 /* Primary = any action-bar button that isn't explicitly secondary. */
-.app__actions button:not(.button--secondary) {
-  background: var(--accent);
-  color: var(--accent-contrast);
-}
-
-.app__actions button:not(.button--secondary):hover:not(:disabled) {
-  background: var(--accent-hover);
-}
-
 .app__error {
   grid-column: 1 / -1;
   color: var(--fail);
@@ -325,11 +294,6 @@ button:disabled {
   display: flex;
   flex-direction: column;
   min-height: 0;
-}
-
-.app__stats {
-  padding-top: 1rem;
-  border-top: 1px solid var(--border);
 }
 
 .app__log h2,
@@ -501,9 +465,8 @@ button:disabled {
   gap: 0.15rem;
 }
 
-.graders__intro h2 {
-  margin: 0;
-  font-size: 1.05rem;
+.graders__intro .card__title {
+  margin: 0 0 0.25rem;
 }
 
 .graders__intro p {
@@ -553,11 +516,6 @@ button:disabled {
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.03em;
-}
-
-.panel__header button {
-  font-size: 0.8rem;
-  padding: var(--control-pad-y-sm) var(--control-pad-x-sm);
 }
 
 .panel__hint,
@@ -730,32 +688,6 @@ button:disabled {
   font-size: 0.8rem;
   font-weight: 400;
   color: var(--muted);
-}
-
-.spec-presets {
-  display: flex;
-  gap: 0.4rem;
-  margin-bottom: 0.4rem;
-}
-
-.spec-preset {
-  font: inherit;
-  font-size: 0.75rem;
-  padding: 0.25rem 0.7rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.spec-preset:hover {
-  border-color: var(--border-strong);
-}
-
-.spec-preset--active {
-  border-color: var(--info);
-  color: var(--info);
 }
 
 .app__run-picker {
@@ -1050,11 +982,6 @@ button:disabled {
   font-size: 0.9rem;
 }
 
-.replay__head button {
-  font-size: 0.8rem;
-  padding: var(--control-pad-y-sm) var(--control-pad-x-sm);
-}
-
 .replay__hint {
   margin: 0;
   font-size: 0.7rem;
@@ -1162,4 +1089,219 @@ button:disabled {
 
 .replay__thumb-label--fail {
   color: #ff8a8a;
+}
+
+.batch-compare__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  margin-bottom: 0.5rem;
+}
+
+.batch-compare__table th,
+.batch-compare__table td {
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  font-weight: normal;
+}
+
+.batch-compare__table thead th {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.batch-compare__table tbody th {
+  font-weight: 600;
+}
+
+.batch-arm {
+  margin-bottom: 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.5rem 0.75rem;
+  background: var(--surface);
+}
+
+.batch-arm > summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+
+/* ---- Sections (cards) ------------------------------------------------------
+   Every major block is a card with a title, so the page reads as separate
+   sections instead of one long form. */
+.card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: 1rem 1.1rem;
+}
+
+.card__title {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+}
+
+.card__hint {
+  margin: 0.75rem 0 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.card__sub {
+  margin-left: 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.card--collapsible > summary {
+  cursor: pointer;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.setup-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.spec-text {
+  width: 100%;
+  margin-top: 0.75rem;
+  font: inherit;
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+  padding: 0.5rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--fg);
+  resize: vertical;
+}
+
+.spec-text:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  border-color: var(--accent);
+}
+
+.probe-list {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.probe {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.probe input {
+  margin-top: 0.2rem;
+}
+
+.probe strong {
+  display: block;
+  color: var(--fg);
+  font-size: 0.85rem;
+}
+
+.probe code {
+  font-family: ui-monospace, monospace;
+}
+
+/* Run card: two groups side by side (single run | batch experiment). */
+.run-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(0, 3fr);
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.run-group + .run-group {
+  border-left: 1px solid var(--border);
+  padding-left: 1.5rem;
+}
+
+.run-group__title {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.run-group__hint {
+  margin: 0.15rem 0 0.75rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+  max-width: 60ch;
+}
+
+.run-group__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 1rem;
+}
+
+.field--compact input {
+  width: 6rem;
+}
+
+.run-status {
+  margin-top: 0.75rem;
+}
+
+.graders__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.graders__notes:empty {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .run-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .run-group + .run-group {
+    border-left: 0;
+    padding-left: 0;
+    border-top: 1px solid var(--border);
+    padding-top: 1rem;
+  }
+}
+
+.card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.card__head .card__title {
+  margin: 0;
+}
+
+.batch-arm[open] > summary {
+  margin-bottom: 0.75rem;
+}
+
+.app__batch .app__run-picker {
+  margin-bottom: 1rem;
 }

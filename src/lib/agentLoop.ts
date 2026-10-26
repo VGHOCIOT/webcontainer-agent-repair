@@ -5,6 +5,7 @@ import { validateApp, aggregateChecks } from "./validate";
 import { runFuzz } from "./fuzz";
 import {
   applyGeneratedFiles,
+  clearProject,
   getWebContainer,
   runInstall,
   runStart,
@@ -97,6 +98,16 @@ export interface RunAgentLoopOptions {
   // a known-good reference app and maxIterations 1 to test the graders
   // themselves; the builder is never called.
   fixedFiles?: GeneratedFile[];
+  // Experiment arm. true (default): retries carry the previous code and its
+  // captured error — the self-healing loop. false: every attempt sees ONLY the
+  // spec, i.e. an independent fresh sample with the same budget and graders.
+  // That is the control that isolates what the feedback itself contributes:
+  // without it a high convergence rate can't be attributed to healing rather
+  // than to the model eventually getting lucky. In this mode the no-progress
+  // guard is off (a fresh sample repeating a failure is expected, not a stall,
+  // and cutting it short would shrink the control's budget) and a sample that
+  // reproduces earlier bytes reuses that build's verdict instead of rebuilding.
+  feedback?: boolean;
   // Interactive runs leave the converged server listening so its preview stays
   // live. Batch runs must set this false: an orphaned server keeps holding the
   // port and the next run's startup then fails with EADDRINUSE, corrupting the
@@ -125,6 +136,9 @@ export interface RunAgentLoopResult {
 // its server up for the preview; an aborted run can leave one behind). A new run
 // kills it first, or the fresh app hits EADDRINUSE and exits 1 before listening.
 let liveServer: WebContainerProcess | null = null;
+// The files the most recent run left on disk, so the next run can start from a
+// clean project directory instead of on top of them (see clearProject).
+let diskFiles: GeneratedFile[] | null = null;
 
 export async function runAgentLoop({
   apiKey,
@@ -139,6 +153,7 @@ export async function runAgentLoop({
   interactionDriver,
   interactionPath,
   fixedFiles,
+  feedback = true,
   keepServerAlive = true,
   onAttempt,
   onPreviewUrl,
@@ -148,6 +163,13 @@ export async function runAgentLoop({
   if (liveServer) {
     liveServer.kill();
     liveServer = null;
+  }
+  // Every run starts from an empty project directory: runs are independent
+  // samples, and the container is shared with whatever ran before (an earlier
+  // batch run, the other arm, a qualification fixture).
+  if (diskFiles) {
+    await clearProject(webcontainer, diskFiles);
+    diskFiles = null;
   }
   // Register the interaction driver once — setPreviewScript applies to every
   // subsequent preview load for the session, so it need not be re-set per attempt.
@@ -202,6 +224,8 @@ export async function runAgentLoop({
   let prevFilesSig: string | null = null;
   let prevFailureSig: string | null = null;
   let consecutiveStalls = 0;
+  // Spec-only arm only: finished (failed) builds by file signature.
+  const builds = new Map<string, Attempt>();
   let stoppedReason: StoppedReason = "max-iterations";
 
   for (let i = 1; i <= maxIterations; i++) {
@@ -218,7 +242,12 @@ export async function runAgentLoop({
     try {
       gen = fixedFiles
         ? { files: fixedFiles, rawText: "", inputTokens: 0, outputTokens: 0 }
-        : await generateCode(apiKey, model, messages);
+        : await generateCode(
+            apiKey,
+            model,
+            // Spec-only arm: no history, so each attempt is an independent sample.
+            feedback ? messages : [{ role: "user", content: spec }],
+          );
     } catch (err) {
       attempt = {
         ...attempt,
@@ -235,9 +264,28 @@ export async function runAgentLoop({
       outputTokens: gen.outputTokens,
       elapsedMs: 0, // filled in once we know the attempt's final outcome
     };
-    messages.push({ role: "assistant", content: gen.rawText });
+    if (feedback) messages.push({ role: "assistant", content: gen.rawText });
 
     const filesSig = filesSignature(gen.files);
+
+    // Spec-only arm: a fresh sample that reproduces bytes we already built has a
+    // known verdict (builds are deterministic), so reuse it rather than rebuild.
+    const priorBuild = feedback ? undefined : builds.get(filesSig);
+    if (priorBuild) {
+      attempt = {
+        ...priorBuild,
+        index: i,
+        stalled: true,
+        usage: {
+          inputTokens: gen.inputTokens,
+          outputTokens: gen.outputTokens,
+          elapsedMs: performance.now() - startedAt,
+        },
+      };
+      onAttempt(attempt);
+      attempts.push(attempt);
+      continue;
+    }
 
     // Each terminal failure sets `attempt`'s stage-specific fields and `failure`,
     // then breaks to the shared handling below. Success returns straight out.
@@ -264,6 +312,7 @@ export async function runAgentLoop({
       // and only what changed is written (and dropped files removed).
       await applyGeneratedFiles(webcontainer, prevFiles, gen.files);
       prevFiles = gen.files;
+      diskFiles = gen.files;
 
       if (previousProcess) {
         previousProcess.kill();
@@ -409,7 +458,9 @@ export async function runAgentLoop({
 
     const filesRepeat = prevFilesSig !== null && filesSig === prevFilesSig;
     const failureRepeat = prevFailureSig !== null && failureSig === prevFailureSig;
-    const stalled = filesRepeat || failureRepeat;
+    // The stall notion belongs to the feedback loop; the spec-only arm just records
+    // reused builds (above) and keeps its full budget.
+    const stalled = feedback && (filesRepeat || failureRepeat);
 
     usage.elapsedMs = performance.now() - startedAt;
     attempt = {
@@ -421,12 +472,13 @@ export async function runAgentLoop({
     };
     onAttempt(attempt);
     attempts.push(attempt);
+    if (!feedback) builds.set(filesSig, attempt);
 
     prevFilesSig = filesSig;
     prevFailureSig = failureSig;
     consecutiveStalls = stalled ? consecutiveStalls + 1 : 0;
 
-    if (consecutiveStalls >= MAX_STALLS) {
+    if (feedback && consecutiveStalls >= MAX_STALLS) {
       stoppedReason = "no-progress";
       break;
     }
@@ -434,12 +486,14 @@ export async function runAgentLoop({
     const stallReason = filesRepeat
       ? "Your last attempt produced byte-identical code to the one before it."
       : "Your last attempt reproduced the exact same failure as the one before it.";
-    messages.push({
-      role: "user",
-      content: stalled
-        ? buildEscalatedRetryPrompt(spec, failure.report, stallReason)
-        : buildRetryPrompt(spec, failure.report),
-    });
+    if (feedback) {
+      messages.push({
+        role: "user",
+        content: stalled
+          ? buildEscalatedRetryPrompt(spec, failure.report, stallReason)
+          : buildRetryPrompt(spec, failure.report),
+      });
+    }
   }
 
   return { attempts, stoppedReason };

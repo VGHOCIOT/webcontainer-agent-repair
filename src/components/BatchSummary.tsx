@@ -1,5 +1,5 @@
-import type { BatchRun } from "../lib/types";
-import { computeBatchSummary } from "../lib/stats";
+import type { BatchArm, BatchRun } from "../lib/types";
+import { computeArmComparison, computeBatchSummary } from "../lib/stats";
 
 const STAGE_LABEL: Record<string, string> = {
   generation: "Generation",
@@ -31,7 +31,95 @@ function iterationsHistogram(values: number[]): { label: string; count: number }
   return buckets;
 }
 
+const ARM_LABEL: Record<BatchArm, string> = {
+  feedback: "Healing (retries see code + error)",
+  "spec-only": "Control (retries see spec only)",
+};
+
+function ci([lo, hi]: [number, number]): string {
+  return `${pct(lo)}–${pct(hi)}`;
+}
+
+// Healing vs. the spec-only control, side by side. Both arms ran the same spec,
+// graders and attempt cap, so the convergence gap is what the error feedback
+// adds over just trying again. Intervals are 95% Wilson — wide at small n, which
+// is the point of showing them.
+function ArmComparison({ runs }: { runs: BatchRun[] }) {
+  const arms = computeArmComparison(runs);
+  if (arms.length < 2) return null;
+  const [heal, ctl] = arms;
+  const delta = Math.round((heal.convergenceRate - ctl.convergenceRate) * 100);
+  return (
+    <div className="batch-block batch-compare">
+      <h4>Healing vs. spec-only control</h4>
+      <table className="batch-compare__table">
+        <thead>
+          <tr>
+            <th></th>
+            <th>runs</th>
+            <th>attempt 1 passes</th>
+            <th>converged within cap</th>
+            <th>median it.</th>
+            <th>tokens / converged run</th>
+          </tr>
+        </thead>
+        <tbody>
+          {arms.map((a) => (
+            <tr key={a.arm}>
+              <th scope="row">{a.arm === "feedback" ? "Healing" : "Control"}</th>
+              <td>{a.runs}</td>
+              <td>
+                {a.firstAttemptPass}/{a.runs} ({pct(a.firstAttemptRate)}, {ci(a.firstAttemptCi)})
+              </td>
+              <td>
+                {a.converged}/{a.runs} ({pct(a.convergenceRate)}, {ci(a.convergenceCi)})
+              </td>
+              <td>{a.medianIterations ?? "—"}</td>
+              <td>
+                {a.tokensPerConvergedRun !== null ? Math.round(a.tokensPerConvergedRun) : "—"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="batch-summary__totals">
+        Feedback adds {delta >= 0 ? "+" : ""}
+        {delta} points of convergence over the control. Intervals overlapping means this batch can't
+        separate them.
+      </p>
+    </div>
+  );
+}
+
 export function BatchSummary({ runs }: { runs: BatchRun[] }) {
+  if (runs.length === 0) return null;
+  const arms = (["feedback", "spec-only"] as BatchArm[]).filter((a) =>
+    runs.some((r) => r.arm === a),
+  );
+  if (arms.length < 2) {
+    return (
+      <>
+        {arms.length === 1 && arms[0] === "spec-only" && (
+          <p className="batch-summary__totals">Control arm only: retries saw the spec, not errors.</p>
+        )}
+        <ArmSummary runs={runs} />
+      </>
+    );
+  }
+  return (
+    <>
+      <ArmComparison runs={runs} />
+      {arms.map((arm) => (
+        <details key={arm} className="batch-arm">
+          <summary>{ARM_LABEL[arm]}</summary>
+          <ArmSummary runs={runs.filter((r) => r.arm === arm)} />
+        </details>
+      ))}
+    </>
+  );
+}
+
+function ArmSummary({ runs }: { runs: BatchRun[] }) {
   if (runs.length === 0) return null;
   const s = computeBatchSummary(runs);
 

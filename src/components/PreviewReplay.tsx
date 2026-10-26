@@ -76,7 +76,7 @@ export function PreviewReplay({ attempts }: { attempts: Attempt[] }) {
     <div className="replay">
       <div className="replay__head">
         <h2>Preview replay</h2>
-        <button className="button--secondary" onClick={() => exportReplay(frames)}>
+        <button className="btn btn--secondary btn--sm" onClick={() => exportReplay(frames)}>
           Export
         </button>
       </div>

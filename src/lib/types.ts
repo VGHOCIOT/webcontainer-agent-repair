@@ -71,6 +71,12 @@ export type StoppedReason =
 // distribution, not a single anecdote.
 export interface BatchRun {
   index: number;
+  // Which retry procedure produced this run: "feedback" = the healing loop,
+  // "spec-only" = the control (see RunAgentLoopOptions.feedback). A paired batch
+  // holds both, one of each per run index.
+  arm: BatchArm;
   attempts: Attempt[];
   stoppedReason: StoppedReason;
 }
+
+export type BatchArm = "feedback" | "spec-only";

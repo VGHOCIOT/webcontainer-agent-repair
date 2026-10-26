@@ -17,7 +17,12 @@ import { derivePreviewPath } from "./lib/preview";
 import { DEFAULT_SPEC, FRONTEND_SPEC } from "./lib/spec";
 import { TASKS_SPEC, FILTER_SPEC, SEARCH_SPEC } from "./lib/interactive";
 import { generateDriver } from "./lib/driverGen";
-import { qualifyGraders, type Qualification } from "./lib/qualify";
+import {
+  qualifyGraders,
+  gradersToRegenerate,
+  QUALIFY_MAX_TRIES,
+  type Qualification,
+} from "./lib/qualify";
 import { BatchSummary } from "./components/BatchSummary";
 import {
   buildBatchExport,
@@ -27,7 +32,7 @@ import {
   type BatchMeta,
   type GraderRecord,
 } from "./lib/exportResults";
-import type { Attempt, AttemptUsage, BatchRun, StoppedReason, ValidationResult } from "./lib/types";
+import type { Attempt, AttemptUsage, BatchArm, BatchRun, StoppedReason, ValidationResult } from "./lib/types";
 
 const API_KEY_STORAGE_KEY = "webcontainer-agent-repair:anthropic-api-key";
 const MODELS = ["claude-sonnet-5", "claude-opus-4-8", "claude-haiku-4-5"];
@@ -54,6 +59,10 @@ const SPEC_PRESETS: {
 // Non-default port the PORT-honoring probe launches the app with (see envPort
 // in agentLoop). Anything other than the conventional 3000 fallback works.
 const PROBE_PORT = 4001;
+
+// Runs repeat the same index once per arm in a paired batch, so index alone is
+// not a unique key.
+const runKey = (run: BatchRun) => `${run.arm}:${run.index}`;
 
 function App() {
   const [apiKey, setApiKey] = useState(
@@ -88,11 +97,22 @@ function App() {
   // Batch mode: run the identical spec+validator N times so convergence reads as
   // a distribution, not a single anecdote.
   const [batchRuns, setBatchRuns] = useState(5);
+  // Which arm(s) a batch runs. Both (the default) runs the healing loop (retries
+  // see the previous code + error) AND the spec-only control (every attempt an
+  // independent fresh sample, same cap) for every run index, against the same
+  // graders. The comparison between them is what shows what the feedback adds,
+  // so it comes out of a single invocation rather than two batches lining up.
+  const [runHealing, setRunHealing] = useState(true);
+  const [runControl, setRunControl] = useState(true);
+  const batchArms: BatchArm[] = [
+    ...(runHealing ? (["feedback"] as const) : []),
+    ...(runControl ? (["spec-only"] as const) : []),
+  ];
   const [batchResults, setBatchResults] = useState<BatchRun[]>([]);
-  const [batchProgress, setBatchProgress] = useState<{ run: number; of: number } | null>(null);
+  const [batchProgress, setBatchProgress] = useState<{ run: number; of: number; arm?: BatchArm } | null>(null);
   // Which completed batch run's attempts to show in the log/stats/timeline.
   // null = show the live `attempts` (a single run, or the in-flight batch run).
-  const [selectedRunIndex, setSelectedRunIndex] = useState<number | null>(null);
+  const [selectedRunKey, setSelectedRunKey] = useState<string | null>(null);
 
   // Mode A: the deterministic validator generated from the current spec, kept
   // in state so it's visible/regenerable and reused across the run's attempts.
@@ -325,7 +345,7 @@ function App() {
     setPreviewPort(null);
     setStoppedReason(null);
     setBatchResults([]);
-    setSelectedRunIndex(null);
+    setSelectedRunKey(null);
     setRegradeResult(null);
     setRunning(true);
 
@@ -413,7 +433,7 @@ function App() {
     setPreviewPort(null);
     setStoppedReason(null);
     setBatchResults([]);
-    setSelectedRunIndex(null);
+    setSelectedRunKey(null);
     setRegradeResult(null);
     setBatchProgress({ run: 0, of: batchRuns });
     setRunning(true);
@@ -422,18 +442,35 @@ function App() {
     abortRef.current = controller;
 
     try {
-      const script = await ensureValidatorScript();
+      let script = await ensureValidatorScript();
       // Batch must grade the UI too — the interaction driver runs in its own
       // hidden iframe (not the visible preview), so it works here, and without
       // it a frontend spec's "converged" would mean only the server was right.
-      const driver = gradeUI ? await ensureDriverScript() : undefined;
+      let driver = gradeUI ? await ensureDriverScript() : undefined;
 
-      // Gate: the graders must pass the known-good reference app before they're
-      // allowed to score a builder. A custom spec has no reference and proceeds,
-      // recorded as unqualified in the export.
-      const q = await runQualification(script, driver);
+      // Gate: the graders must pass the known-good reference app (and fail its
+      // known-broken variants) before they're allowed to score a builder. A
+      // rejection regenerates only the grader at fault and tries again, up to
+      // QUALIFY_MAX_TRIES; a custom spec has no reference and proceeds, recorded
+      // as unqualified in the export.
+      const rejectedTries: string[] = [];
+      let q = await runQualification(script, driver);
+      let tries = 1;
+      while (tries < QUALIFY_MAX_TRIES) {
+        const redo = gradersToRegenerate(q);
+        if (!redo) break;
+        rejectedTries.push(`try ${tries}: ${q.status} — ${q.message}`);
+        if (redo.validator) script = await generate();
+        if (redo.driver && gradeUI) driver = await generateDriverScript();
+        q = await runQualification(script, driver);
+        tries++;
+      }
       if (q.status !== "qualified" && q.status !== "no-reference") {
-        setRunError(`Batch not started — grader qualification ${q.status}. ${q.message}`);
+        setRunError(
+          `Batch not started — grader qualification ${q.status} after ${tries} ${
+            tries === 1 ? "try" : "tries"
+          }. ${[...rejectedTries, `try ${tries}: ${q.message}`].join(" | ")}`,
+        );
         return;
       }
 
@@ -460,6 +497,7 @@ function App() {
           fuzz: fuzzProbe,
         },
         gradeUI,
+        arms: batchArms,
         validator: await record(script, validatorInfoRef.current),
         driver: driver ? await record(driver, driverInfoRef.current) : null,
         qualification: {
@@ -468,6 +506,8 @@ function App() {
             ...q.failing.map((c) => c.name),
             ...q.missedMutants.map((m) => `passed known-bad variant: ${m}`),
           ],
+          tries,
+          rejectedTries,
         },
         startedAt: new Date().toISOString(),
       });
@@ -485,12 +525,13 @@ function App() {
         interactionDriver: driver,
         interactionPath: activePreset?.driverPath ?? "/",
         runs: batchRuns,
+        arms: batchArms,
         signal: controller.signal,
-        onRunStart: (runIndex) => {
-          setBatchProgress({ run: runIndex, of: batchRuns });
+        onRunStart: (runIndex, arm) => {
+          setBatchProgress({ run: runIndex, of: batchRuns, arm });
           setAttempts([]); // show only the currently-executing run's live attempts
         },
-        onAttempt: (_runIndex, attempt) => {
+        onAttempt: (_runIndex, _arm, attempt) => {
           setAttempts((prev) => {
             const next = prev.filter((a) => a.index !== attempt.index);
             next.push(attempt);
@@ -504,7 +545,7 @@ function App() {
       });
       // Land on the last completed run so the stats/timeline show real data
       // instead of the leftover live attempts.
-      if (results.length > 0) setSelectedRunIndex(results[results.length - 1].index);
+      if (results.length > 0) setSelectedRunKey(runKey(results[results.length - 1]));
     } catch (err) {
       setRunError((err as Error).message);
     } finally {
@@ -523,9 +564,8 @@ function App() {
   // The log/stats/timeline show a picked batch run when one is selected,
   // otherwise the live attempts (single run, or the in-flight batch run).
   const selectedRun =
-    selectedRunIndex !== null
-      ? batchResults.find((r) => r.index === selectedRunIndex)
-      : undefined;
+    selectedRunKey !== null ? batchResults.find((r) => runKey(r) === selectedRunKey) : undefined;
+  const pairedBatch = batchResults.some((r) => r.arm === "feedback") && batchResults.some((r) => r.arm === "spec-only");
   const displayAttempts = selectedRun ? selectedRun.attempts : attempts;
 
   return (
@@ -541,154 +581,221 @@ function App() {
         <ThemeToggle />
       </header>
 
-      <div className="app__config">
-        <label className="field">
-          <span>Anthropic API key</span>
-          <input
-            type="password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder="sk-ant-..."
-            disabled={running}
-          />
-        </label>
+      <section className="card">
+        <h2 className="card__title">Setup</h2>
+        <div className="setup-grid">
+          <label className="field">
+            <span>Anthropic API key</span>
+            <input
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="sk-ant-..."
+              disabled={running}
+            />
+          </label>
 
-        <label className="field">
-          <span>Builder model</span>
-          <select
-            value={builderModel}
-            onChange={(e) => setBuilderModel(e.target.value)}
-            disabled={running}
-          >
-            {MODELS.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
-        </label>
+          <label className="field">
+            <span>Builder model</span>
+            <select
+              value={builderModel}
+              onChange={(e) => setBuilderModel(e.target.value)}
+              disabled={running}
+            >
+              {MODELS.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          </label>
 
-        <label className="field">
-          <span>Grader model</span>
-          <select
-            value={validatorModel}
-            onChange={(e) => setValidatorModel(e.target.value)}
-            disabled={running || generatingValidator || generatingDriver}
-          >
-            {MODELS.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <p className="app__hint">
+          <label className="field">
+            <span>Grader model</span>
+            <select
+              value={validatorModel}
+              onChange={(e) => setValidatorModel(e.target.value)}
+              disabled={running || generatingValidator || generatingDriver}
+            >
+              {MODELS.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <p className="card__hint">
           The builder writes the app every attempt; the grader model authors both
           graders once — the loopback validator and the interaction driver.
         </p>
+      </section>
 
-        <label className="field field--spec">
-          <span>Spec</span>
-          <div className="spec-presets">
-            {SPEC_PRESETS.map((preset) => (
-              <button
-                key={preset.name}
-                type="button"
-                onClick={() => setSpec(preset.spec)}
-                disabled={running}
-                aria-pressed={spec === preset.spec}
-                className={`spec-preset${spec === preset.spec ? " spec-preset--active" : ""}`}
-              >
-                {preset.name}
-              </button>
-            ))}
-          </div>
-          <textarea
-            value={spec}
-            onChange={(e) => setSpec(e.target.value)}
-            rows={8}
-            disabled={running}
-          />
-        </label>
-
-        <label className="app__probe">
-          <input
-            type="checkbox"
-            checked={portProbe}
-            onChange={(e) => setPortProbe(e.target.checked)}
-            disabled={running}
-          />
-          <span>
-            PORT-honoring probe — launch the app with <code>PORT={PROBE_PORT}</code>{" "}
-            and fail startup if it comes up on another port (a genuine, disclosed
-            config-bug probe).
-          </span>
-        </label>
-
-        <label className="app__probe">
-          <input
-            type="checkbox"
-            checked={offlineProbe}
-            onChange={(e) => setOfflineProbe(e.target.checked)}
-            disabled={running}
-          />
-          <span>
-            Offline-install probe — run <code>npm install --offline</code> so any
-            attempt to pull in an npm package fails at the install stage (catches
-            a builder ignoring "no npm packages").
-          </span>
-        </label>
-
-        <label className="app__probe">
-          <input
-            type="checkbox"
-            checked={fuzzProbe}
-            onChange={(e) => setFuzzProbe(e.target.checked)}
-            disabled={running}
-          />
-          <span>
-            Fuzz probe — after the validator passes, hit the live server with
-            concurrent load and malformed input; a 5xx or a crash under fuzzing
-            fails the attempt (surfaces unhandled-input bugs the happy path hides).
-          </span>
-        </label>
-
-        <div className="app__actions">
-          <button onClick={handleStart} disabled={running}>
-            {running ? "Running…" : "Build"}
-          </button>
-          <div className="app__batch-control">
+      <section className="card">
+        <h2 className="card__title">Spec</h2>
+        <div className="toggle-group" role="group" aria-label="Spec presets">
+          {SPEC_PRESETS.map((preset) => (
             <button
-              onClick={handleBatch}
+              key={preset.name}
+              type="button"
+              onClick={() => setSpec(preset.spec)}
               disabled={running}
-              className="button--secondary"
+              aria-pressed={spec === preset.spec}
+              className="toggle-chip"
             >
-              Run batch
+              {preset.name}
             </button>
-            <input
-              type="number"
-              min={2}
-              max={50}
-              value={batchRuns}
-              onChange={(e) =>
-                setBatchRuns(Math.max(2, Math.min(50, Number(e.target.value) || 2)))
-              }
-              disabled={running}
-              aria-label="Number of batch runs"
-            />
-            <span>runs</span>
+          ))}
+        </div>
+        <textarea
+          className="spec-text"
+          value={spec}
+          onChange={(e) => setSpec(e.target.value)}
+          rows={8}
+          disabled={running}
+          aria-label="Spec"
+        />
+      </section>
+
+      <details className="card card--collapsible">
+        <summary>
+          Stress tests <span className="card__sub">optional · off by default</span>
+        </summary>
+        <ul className="probe-list">
+          <li>
+            <label className="probe">
+              <input
+                type="checkbox"
+                checked={portProbe}
+                onChange={(e) => setPortProbe(e.target.checked)}
+                disabled={running}
+              />
+              <span>
+                <strong>PORT-honoring</strong>
+                Launch the app with <code>PORT={PROBE_PORT}</code> and fail startup if it comes
+                up on another port.
+              </span>
+            </label>
+          </li>
+          <li>
+            <label className="probe">
+              <input
+                type="checkbox"
+                checked={offlineProbe}
+                onChange={(e) => setOfflineProbe(e.target.checked)}
+                disabled={running}
+              />
+              <span>
+                <strong>Offline install</strong>
+                Run <code>npm install --offline</code> so any attempt to pull in an npm package
+                fails at the install stage.
+              </span>
+            </label>
+          </li>
+          <li>
+            <label className="probe">
+              <input
+                type="checkbox"
+                checked={fuzzProbe}
+                onChange={(e) => setFuzzProbe(e.target.checked)}
+                disabled={running}
+              />
+              <span>
+                <strong>Fuzz</strong>
+                After the validator passes, hit the live server with concurrent load and
+                malformed input; a 5xx or a crash fails the attempt.
+              </span>
+            </label>
+          </li>
+        </ul>
+      </details>
+
+      <section className="card">
+        <h2 className="card__title">Run</h2>
+        <div className="run-grid">
+          <div className="run-group">
+            <h3 className="run-group__title">Single run</h3>
+            <p className="run-group__hint">Build once and watch the attempts live.</p>
+            <div className="run-group__controls">
+              <button onClick={handleStart} disabled={running} className="btn btn--primary">
+                {running ? "Running…" : "Build"}
+              </button>
+            </div>
           </div>
-          {running && (
-            <button onClick={handleStop} className="button--secondary">
+
+          <div className="run-group">
+            <h3 className="run-group__title">Batch experiment</h3>
+            <p className="run-group__hint">
+              Repeat the spec to see a distribution. With both arms on, every run is done twice on
+              the same graders so the two can be compared.
+            </p>
+            <div className="run-group__controls">
+              <label className="field field--compact">
+                <span>Runs per arm</span>
+                <input
+                  type="number"
+                  min={2}
+                  max={50}
+                  value={batchRuns}
+                  onChange={(e) =>
+                    setBatchRuns(Math.max(2, Math.min(50, Number(e.target.value) || 2)))
+                  }
+                  disabled={running}
+                />
+              </label>
+              <div className="field field--compact">
+                <span id="arms-label">Arms</span>
+                <div className="toggle-group" role="group" aria-labelledby="arms-label">
+                  <button
+                    type="button"
+                    className="toggle-chip"
+                    aria-pressed={runHealing}
+                    disabled={running}
+                    title="Healing: retries see the previous code and its captured error."
+                    onClick={() => {
+                      if (runHealing && !runControl) return; // keep at least one arm
+                      setRunHealing(!runHealing);
+                    }}
+                  >
+                    Healing
+                  </button>
+                  <button
+                    type="button"
+                    className="toggle-chip"
+                    aria-pressed={runControl}
+                    disabled={running}
+                    title="Control: every attempt sees only the spec, as an independent fresh sample."
+                    onClick={() => {
+                      if (runControl && !runHealing) return; // keep at least one arm
+                      setRunControl(!runControl);
+                    }}
+                  >
+                    Control (spec only)
+                  </button>
+                </div>
+              </div>
+              <button onClick={handleBatch} disabled={running} className="btn btn--secondary">
+                Run batch
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {running && (
+          <div className="run-status">
+            <button onClick={handleStop} className="btn btn--secondary btn--sm">
               Stop
             </button>
-          )}
-        </div>
+          </div>
+        )}
 
         {batchProgress && batchProgress.run > 0 && (
           <p className="app__done">
-            Batch: run {batchProgress.run} / {batchProgress.of}…
+            Batch: run {batchProgress.run} / {batchProgress.of}
+            {batchProgress.arm && batchArms.length > 1
+              ? ` (${batchProgress.arm === "feedback" ? "healing" : "control"})`
+              : ""}
+            …
           </p>
         )}
 
@@ -710,17 +817,19 @@ function App() {
             Gave up after {MAX_ITERATIONS} attempts without a passing build.
           </p>
         )}
-      </div>
+      </section>
 
-      <section className="graders">
-        <div className="graders__intro">
-          <h2>Graders</h2>
-          <p>
-            How each attempt is judged — both authored once from the spec by the
-            grader model, then run deterministically every attempt. The validator
-            grades the server over loopback HTTP; the interaction driver grades
-            the rendered UI in the browser.
-          </p>
+      <section className="card graders">
+        <div className="graders__head">
+          <div className="graders__intro">
+            <h2 className="card__title">Graders</h2>
+            <p>
+              How each attempt is judged — both authored once from the spec by the
+              grader model, then run deterministically every attempt. The validator
+              grades the server over loopback HTTP; the interaction driver grades
+              the rendered UI in the browser.
+            </p>
+          </div>
           <input
             ref={importInputRef}
             type="file"
@@ -734,12 +843,14 @@ function App() {
           />
           <button
             onClick={() => importInputRef.current?.click()}
-            className="button--secondary"
+            className="btn btn--secondary btn--sm"
             disabled={running || generatingValidator || generatingDriver}
             title="Reuse the graders from a previous batch export so two runs are scored identically"
           >
             Import graders
           </button>
+        </div>
+        <div className="graders__notes">
           {qualification && (
             <div
               className={`app__regrade-result app__regrade-result--${
@@ -760,7 +871,7 @@ function App() {
               </div>
               <button
                 onClick={handleRegenerate}
-                className="button--secondary"
+                className="btn btn--secondary btn--sm"
                 disabled={running || generatingValidator}
               >
                 {generatingValidator ? "Generating…" : "Regenerate"}
@@ -814,7 +925,7 @@ function App() {
                 </div>
                 <button
                   onClick={handleRegenerateDriver}
-                  className="button--secondary"
+                  className="btn btn--secondary btn--sm"
                   disabled={running || generatingDriver}
                 >
                   {generatingDriver ? "Generating…" : "Regenerate"}
@@ -862,58 +973,66 @@ function App() {
         </div>
       </section>
 
+      {batchResults.length > 0 && (
+        <section className="card app__batch">
+          <div className="card__head">
+            <h2 className="card__title">Batch results ({batchResults.length})</h2>
+            <button
+              onClick={handleDownloadBatch}
+              className="btn btn--secondary btn--sm"
+              disabled={running || !batchMeta}
+              title="Download every run, attempt, check (with layer), the grader scripts and the config as JSON"
+            >
+              Download results (JSON)
+            </button>
+          </div>
+          <div className="app__run-picker" role="group" aria-label="Batch runs">
+            {batchResults.map((run) => (
+              <button
+                key={runKey(run)}
+                onClick={() => setSelectedRunKey(runKey(run))}
+                aria-pressed={selectedRunKey === runKey(run)}
+                className={`run-chip run-chip--${
+                  run.stoppedReason === "converged" ? "pass" : "fail"
+                }${selectedRunKey === runKey(run) ? " run-chip--active" : ""}`}
+                title={`${run.arm === "feedback" ? "healing" : "spec-only control"} · ${run.stoppedReason} · ${run.attempts.length} attempts`}
+              >
+                #{run.index}
+                {pairedBatch && (run.arm === "feedback" ? " H" : " C")}
+              </button>
+            ))}
+          </div>
+          <BatchSummary runs={batchResults} />
+        </section>
+      )}
+
       <main className="app__body">
-        <section className="app__log">
+        <section className="app__log card">
           <h2>
             Attempt log
             {selectedRun && (
-              <span className="app__viewing"> · run #{selectedRun.index}</span>
+              <span className="app__viewing">
+                {" "}
+                · run #{selectedRun.index}
+                {pairedBatch && ` (${selectedRun.arm === "feedback" ? "healing" : "control"})`}
+              </span>
             )}
           </h2>
           <AttemptLog attempts={displayAttempts} />
         </section>
-        <section className="app__stats">
+        <section className="app__stats card">
           <RunStats running={running && !selectedRun} attempts={displayAttempts} />
           <HealingTimeline attempts={displayAttempts} />
           <PreviewReplay attempts={displayAttempts} />
           <AttemptDiff attempts={displayAttempts} />
-          {batchResults.length > 0 && (
-            <div className="app__batch">
-              <h2>Batch results ({batchResults.length})</h2>
-              <div className="app__run-picker" role="group" aria-label="Batch runs">
-                {batchResults.map((run) => (
-                  <button
-                    key={run.index}
-                    onClick={() => setSelectedRunIndex(run.index)}
-                    aria-pressed={selectedRunIndex === run.index}
-                    className={`run-chip run-chip--${
-                      run.stoppedReason === "converged" ? "pass" : "fail"
-                    }${selectedRunIndex === run.index ? " run-chip--active" : ""}`}
-                    title={`${run.stoppedReason} · ${run.attempts.length} attempts`}
-                  >
-                    #{run.index}
-                  </button>
-                ))}
-              </div>
-              <button
-                onClick={handleDownloadBatch}
-                className="button--secondary"
-                disabled={running || !batchMeta}
-                title="Download every run, attempt, check (with layer), the grader scripts and the config as JSON"
-              >
-                Download results (JSON)
-              </button>
-              <BatchSummary runs={batchResults} />
-            </div>
-          )}
         </section>
-        <section className="app__preview">
+        <section className="app__preview card">
           <div className="app__preview-head">
             <h2>Live preview</h2>
             {previewPort != null && (
               <button
                 onClick={handleRegrade}
-                className="button--secondary"
+                className="btn btn--secondary btn--sm"
                 disabled={running || regrading || !validatorScript}
                 title="Re-run the current validator against the running build (e.g. after editing the validator)"
               >

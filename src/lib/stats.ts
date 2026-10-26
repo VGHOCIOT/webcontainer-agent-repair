@@ -1,4 +1,4 @@
-import type { FailureStage, Attempt, BatchRun, StoppedReason } from "./types";
+import type { FailureStage, Attempt, BatchArm, BatchRun, StoppedReason } from "./types";
 import { last } from "./utils"
 
 export type CellState = "pass" | "fail" | "absent";
@@ -261,4 +261,68 @@ export function computeBatchSummary(runs: BatchRun[]): BatchSummary {
         totalOutputTokens,
         totalElapsedMs,
     };
+}
+// ---- arm comparison (healing vs. spec-only control) ----
+
+/** 95% Wilson score interval for k successes in n trials (sane at k=0 and k=n). */
+export function wilsonInterval(k: number, n: number): [number, number] {
+    if (n === 0) return [0, 0];
+    const z = 1.96;
+    const p = k / n;
+    const denom = 1 + (z * z) / n;
+    const centre = (p + (z * z) / (2 * n)) / denom;
+    const half = (z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))) / denom;
+    return [Math.max(0, centre - half), Math.min(1, centre + half)];
+}
+
+export interface ArmStats {
+    arm: BatchArm;
+    runs: number;
+    firstAttemptPass: number;
+    firstAttemptRate: number;
+    firstAttemptCi: [number, number];
+    converged: number;
+    convergenceRate: number;
+    convergenceCi: [number, number];
+    medianIterations: number | null;
+    meanIterations: number | null;
+    // Mean tokens (in + out) over CONVERGED runs only — cost of getting a result.
+    tokensPerConvergedRun: number | null;
+}
+
+/**
+ * One row per arm present in `runs` (healing first). In a paired batch both arms
+ * ran the same spec, graders and attempt cap, so the gap between their
+ * convergence rates is what the error feedback adds over simply trying again.
+ */
+export function computeArmComparison(runs: BatchRun[]): ArmStats[] {
+    const out: ArmStats[] = [];
+    for (const arm of ["feedback", "spec-only"] as BatchArm[]) {
+        const armRuns = runs.filter((r) => r.arm === arm);
+        if (armRuns.length === 0) continue;
+        const n = armRuns.length;
+        const firstPass = armRuns.filter((r) => r.attempts[0]?.status === "passed").length;
+        const converged = armRuns.filter((r) => r.stoppedReason === "converged");
+        const iters = converged.map((r) => r.attempts.length);
+        const tokens = converged.map((r) =>
+            r.attempts.reduce(
+                (s, a) => s + (a.usage?.inputTokens ?? 0) + (a.usage?.outputTokens ?? 0),
+                0,
+            ),
+        );
+        out.push({
+            arm,
+            runs: n,
+            firstAttemptPass: firstPass,
+            firstAttemptRate: firstPass / n,
+            firstAttemptCi: wilsonInterval(firstPass, n),
+            converged: converged.length,
+            convergenceRate: converged.length / n,
+            convergenceCi: wilsonInterval(converged.length, n),
+            medianIterations: median([...iters].sort((a, b) => a - b)),
+            meanIterations: iters.length ? iters.reduce((a, b) => a + b, 0) / iters.length : null,
+            tokensPerConvergedRun: tokens.length ? tokens.reduce((a, b) => a + b, 0) / tokens.length : null,
+        });
+    }
+    return out;
 }
