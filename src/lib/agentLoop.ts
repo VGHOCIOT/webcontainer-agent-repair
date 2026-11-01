@@ -1,6 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { generateCode } from "./anthropic";
-import { buildRetryPrompt, buildEscalatedRetryPrompt } from "./spec";
+import { buildRetryPrompt, buildEscalatedRetryPrompt, buildInformedPrompt } from "./spec";
 import { validateApp, aggregateChecks } from "./validate";
 import { runFuzz } from "./fuzz";
 import {
@@ -108,6 +108,12 @@ export interface RunAgentLoopOptions {
   // and cutting it short would shrink the control's budget) and a sample that
   // reproduces earlier bytes reuses that build's verdict instead of rebuilding.
   feedback?: boolean;
+  // Informed-resampling arm (only meaningful with feedback: false). Check names
+  // from a passing run of the graders (the qualification reference run), shown
+  // to the builder up front on every attempt alongside the spec. Disclosure only:
+  // still no previous code, no errors, no check details. Separates "told what the
+  // graders require" from "debugged the actual failure" in the healing arm's lead.
+  checklist?: string[];
   // Interactive runs leave the converged server listening so its preview stays
   // live. Batch runs must set this false: an orphaned server keeps holding the
   // port and the next run's startup then fails with EADDRINUSE, corrupting the
@@ -154,6 +160,7 @@ export async function runAgentLoop({
   interactionPath,
   fixedFiles,
   feedback = true,
+  checklist,
   keepServerAlive = true,
   onAttempt,
   onPreviewUrl,
@@ -213,7 +220,10 @@ export async function runAgentLoop({
     });
   }
 
-  const messages: Anthropic.MessageParam[] = [{ role: "user", content: spec }];
+  // What a spec-only-style attempt sees: the spec, plus the grader checklist in
+  // the informed arm.
+  const freshPrompt = checklist?.length ? buildInformedPrompt(spec, checklist) : spec;
+  const messages: Anthropic.MessageParam[] = [{ role: "user", content: freshPrompt }];
   const attempts: Attempt[] = [];
   let previousProcess: WebContainerProcess | null = null;
   // The files applied to disk on the previous attempt, so each attempt writes
@@ -246,7 +256,7 @@ export async function runAgentLoop({
             apiKey,
             model,
             // Spec-only arm: no history, so each attempt is an independent sample.
-            feedback ? messages : [{ role: "user", content: spec }],
+            feedback ? messages : [{ role: "user", content: freshPrompt }],
           );
     } catch (err) {
       attempt = {

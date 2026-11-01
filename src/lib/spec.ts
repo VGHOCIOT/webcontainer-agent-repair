@@ -38,6 +38,21 @@ Rules:
 - package.json must be valid JSON with a "start" script.
 - If you are given a previous attempt's error output, treat it as ground truth about what actually happened when the code ran — read it carefully and fix the specific failure, rather than rewriting the app from scratch.`;
 
+/**
+ * The informed-resampling arm's prompt: the spec plus the NAMES of the checks the
+ * graders run, nothing about any outcome. The names are the requirements the
+ * spec leaves unstated (routes, shapes, element ids), which is exactly what the
+ * healing arm otherwise learns from its first failure. No code, no actual-vs-
+ * expected details — that part is the debugging signal this arm must not get.
+ */
+export function buildInformedPrompt(spec: string, checkNames: string[]): string {
+  return `${spec}
+
+Your app will be graded on exactly these checks:
+
+${checkNames.map((n) => `- ${n}`).join("\n")}`;
+}
+
 export function buildRetryPrompt(spec: string, errorReport: string): string {
   return `The previous attempt failed. Here is what actually happened when it ran:
 

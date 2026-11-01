@@ -290,14 +290,22 @@ export interface ArmStats {
     tokensPerConvergedRun: number | null;
 }
 
+export const ARM_ORDER: BatchArm[] = ["feedback", "informed", "spec-only"];
+// Short names for chips/labels; the letter marks a run chip in a multi-arm batch.
+export const ARM_SHORT: Record<BatchArm, { name: string; letter: string }> = {
+  feedback: { name: "healing", letter: "H" },
+  informed: { name: "informed", letter: "I" },
+  "spec-only": { name: "control", letter: "C" },
+};
+
 /**
- * One row per arm present in `runs` (healing first). In a paired batch both arms
+ * One row per arm present in `runs` (healing, then informed, then spec-only). In a paired batch both arms
  * ran the same spec, graders and attempt cap, so the gap between their
  * convergence rates is what the error feedback adds over simply trying again.
  */
 export function computeArmComparison(runs: BatchRun[]): ArmStats[] {
     const out: ArmStats[] = [];
-    for (const arm of ["feedback", "spec-only"] as BatchArm[]) {
+    for (const arm of ARM_ORDER) {
         const armRuns = runs.filter((r) => r.arm === arm);
         if (armRuns.length === 0) continue;
         const n = armRuns.length;

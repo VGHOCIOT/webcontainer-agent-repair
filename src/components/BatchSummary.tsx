@@ -1,5 +1,5 @@
 import type { BatchArm, BatchRun } from "../lib/types";
-import { computeArmComparison, computeBatchSummary } from "../lib/stats";
+import { ARM_ORDER, computeArmComparison, computeBatchSummary } from "../lib/stats";
 
 const STAGE_LABEL: Record<string, string> = {
   generation: "Generation",
@@ -33,7 +33,14 @@ function iterationsHistogram(values: number[]): { label: string; count: number }
 
 const ARM_LABEL: Record<BatchArm, string> = {
   feedback: "Healing (retries see code + error)",
+  informed: "Informed (fresh samples see spec + grader check names)",
   "spec-only": "Control (retries see spec only)",
+};
+
+const ARM_ROW_LABEL: Record<BatchArm, string> = {
+  feedback: "Healing",
+  informed: "Informed",
+  "spec-only": "Control",
 };
 
 function ci([lo, hi]: [number, number]): string {
@@ -47,11 +54,22 @@ function ci([lo, hi]: [number, number]): string {
 function ArmComparison({ runs }: { runs: BatchRun[] }) {
   const arms = computeArmComparison(runs);
   if (arms.length < 2) return null;
-  const [heal, ctl] = arms;
-  const delta = Math.round((heal.convergenceRate - ctl.convergenceRate) * 100);
+  const rate = (arm: BatchArm) => arms.find((a) => a.arm === arm)?.convergenceRate;
+  const gap = (hi: BatchArm, lo: BatchArm, what: string) => {
+    const a = rate(hi);
+    const b = rate(lo);
+    if (a === undefined || b === undefined) return null;
+    const d = Math.round((a - b) * 100);
+    return (
+      <li key={what}>
+        {what}: {d >= 0 ? "+" : ""}
+        {d} points of convergence
+      </li>
+    );
+  };
   return (
     <div className="batch-block batch-compare">
-      <h4>Healing vs. spec-only control</h4>
+      <h4>{arms.map((a) => ARM_ROW_LABEL[a.arm]).join(" vs. ")}</h4>
       <table className="batch-compare__table">
         <thead>
           <tr>
@@ -66,7 +84,7 @@ function ArmComparison({ runs }: { runs: BatchRun[] }) {
         <tbody>
           {arms.map((a) => (
             <tr key={a.arm}>
-              <th scope="row">{a.arm === "feedback" ? "Healing" : "Control"}</th>
+              <th scope="row">{ARM_ROW_LABEL[a.arm]}</th>
               <td>{a.runs}</td>
               <td>
                 {a.firstAttemptPass}/{a.runs} ({pct(a.firstAttemptRate)}, {ci(a.firstAttemptCi)})
@@ -82,10 +100,13 @@ function ArmComparison({ runs }: { runs: BatchRun[] }) {
           ))}
         </tbody>
       </table>
+      <ul className="batch-summary__totals">
+        {gap("informed", "spec-only", "Disclosing the checks (informed over control)")}
+        {gap("feedback", "informed", "Debugging from errors (healing over informed)")}
+        {gap("feedback", "spec-only", "Total feedback (healing over control)")}
+      </ul>
       <p className="batch-summary__totals">
-        Feedback adds {delta >= 0 ? "+" : ""}
-        {delta} points of convergence over the control. Intervals overlapping means this batch can't
-        separate them.
+        Intervals overlapping means this batch can't separate the arms.
       </p>
     </div>
   );
@@ -93,7 +114,7 @@ function ArmComparison({ runs }: { runs: BatchRun[] }) {
 
 export function BatchSummary({ runs }: { runs: BatchRun[] }) {
   if (runs.length === 0) return null;
-  const arms = (["feedback", "spec-only"] as BatchArm[]).filter((a) =>
+  const arms = ARM_ORDER.filter((a) =>
     runs.some((r) => r.arm === a),
   );
   if (arms.length < 2) {
@@ -101,6 +122,11 @@ export function BatchSummary({ runs }: { runs: BatchRun[] }) {
       <>
         {arms.length === 1 && arms[0] === "spec-only" && (
           <p className="batch-summary__totals">Control arm only: retries saw the spec, not errors.</p>
+        )}
+        {arms.length === 1 && arms[0] === "informed" && (
+          <p className="batch-summary__totals">
+            Informed arm only: retries saw the spec and the grader check names, not errors.
+          </p>
         )}
         <ArmSummary runs={runs} />
       </>
