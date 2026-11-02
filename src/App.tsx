@@ -479,15 +479,21 @@ function App() {
         return;
       }
 
-      // The informed arm is shown the check names from the qualified reference
-      // run. A custom spec has no reference run, hence no names to show.
+      // The informed arm is shown the names of the checks the graders will run,
+      // taken from the graders themselves (both authors report them), so it works
+      // for any spec, not just presets with a reference app. The driver harness
+      // appends its uncaught-client-error check at run time, so it is added here.
       const informedChecklist = batchArms.includes("informed")
-        ? q.checks.map((c) => c.name)
+        ? [
+            ...new Set([
+              ...(validatorInfoRef.current?.checkNames ?? []),
+              ...(driver ? (driverInfoRef.current?.checkNames ?? []) : []),
+              ...(driver ? ["frontend: no uncaught client errors"] : []),
+            ]),
+          ]
         : null;
       if (batchArms.includes("informed") && !informedChecklist?.length) {
-        setRunError(
-          "Batch not started — the informed arm needs the grader's check names, which come from the reference app run. This spec has no reference app.",
-        );
+        setRunError("Batch not started — the informed arm needs the graders' check names, and none were reported.");
         return;
       }
 
