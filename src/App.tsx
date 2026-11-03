@@ -479,19 +479,30 @@ function App() {
         return;
       }
 
-      // The informed arm is shown the names of the checks the graders will run,
-      // taken from the graders themselves (both authors report them), so it works
-      // for any spec, not just presets with a reference app. The driver harness
-      // appends its uncaught-client-error check at run time, so it is added here.
-      const informedChecklist = batchArms.includes("informed")
-        ? [
-            ...new Set([
-              ...(validatorInfoRef.current?.checkNames ?? []),
-              ...(driver ? (driverInfoRef.current?.checkNames ?? []) : []),
-              ...(driver ? ["frontend: no uncaught client errors"] : []),
-            ]),
-          ]
-        : null;
+      // The informed arm is shown the names of the checks the graders run. Prefer
+      // the names the graders ACTUALLY emitted on the qualification reference run
+      // (q.checks); the authored lists are the model's own best-effort summary of
+      // its script and can be empty or drift from what it emits. A custom spec
+      // has no reference run, so it falls back to the authored lists (plus the
+      // driver harness's run-time client-error check) — recorded in the export.
+      const runNames = q.checks.map((c) => c.name);
+      const informedChecklistSource: "run" | "authored" | null = !batchArms.includes("informed")
+        ? null
+        : runNames.length > 0
+          ? "run"
+          : "authored";
+      const informedChecklist =
+        informedChecklistSource === "run"
+          ? runNames
+          : informedChecklistSource === "authored"
+            ? [
+                ...new Set([
+                  ...(validatorInfoRef.current?.checkNames ?? []),
+                  ...(driver ? (driverInfoRef.current?.checkNames ?? []) : []),
+                  ...(driver ? ["frontend: no uncaught client errors"] : []),
+                ]),
+              ]
+            : null;
       if (batchArms.includes("informed") && !informedChecklist?.length) {
         setRunError("Batch not started — the informed arm needs the graders' check names, and none were reported.");
         return;
@@ -522,6 +533,7 @@ function App() {
         gradeUI,
         arms: batchArms,
         informedChecklist,
+        informedChecklistSource,
         validator: await record(script, validatorInfoRef.current),
         driver: driver ? await record(driver, driverInfoRef.current) : null,
         qualification: {

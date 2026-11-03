@@ -37,6 +37,10 @@ export interface BatchMeta {
   arms: BatchArm[];
   // The check names the "informed" arm was shown (null when that arm didn't run).
   informedChecklist: string[] | null;
+  // Where those names came from: "run" = emitted by the graders on the
+  // qualification reference run (exact); "authored" = the grader models' own
+  // best-effort lists (custom spec, unqualified). Don't pool across the two.
+  informedChecklistSource: "run" | "authored" | null;
   gradeUI: boolean;
   validator: GraderRecord;
   driver: GraderRecord | null;
