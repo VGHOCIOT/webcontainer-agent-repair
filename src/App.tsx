@@ -10,6 +10,7 @@ import { ThemeToggle } from "./components/ThemeToggle";
 import { DEFAULT_MODEL, DEFAULT_BUILDER_MODEL } from "./lib/anthropic";
 import { runAgentLoop } from "./lib/agentLoop";
 import { runBatch } from "./lib/batch";
+import { ARM_SHORT } from "./lib/stats";
 import { getWebContainer } from "./lib/webcontainer";
 import { validateApp } from "./lib/validate";
 import { generateValidator } from "./lib/validatorGen";
@@ -104,8 +105,12 @@ function App() {
   // so it comes out of a single invocation rather than two batches lining up.
   const [runHealing, setRunHealing] = useState(true);
   const [runControl, setRunControl] = useState(true);
+  // Opt-in third arm: fresh samples that also see the grader's check names, so
+  // "told what the graders require" can be separated from "debugged the error".
+  const [runInformed, setRunInformed] = useState(false);
   const batchArms: BatchArm[] = [
     ...(runHealing ? (["feedback"] as const) : []),
+    ...(runInformed ? (["informed"] as const) : []),
     ...(runControl ? (["spec-only"] as const) : []),
   ];
   const [batchResults, setBatchResults] = useState<BatchRun[]>([]);
@@ -474,6 +479,35 @@ function App() {
         return;
       }
 
+      // The informed arm is shown the names of the checks the graders run. Prefer
+      // the names the graders ACTUALLY emitted on the qualification reference run
+      // (q.checks); the authored lists are the model's own best-effort summary of
+      // its script and can be empty or drift from what it emits. A custom spec
+      // has no reference run, so it falls back to the authored lists (plus the
+      // driver harness's run-time client-error check) — recorded in the export.
+      const runNames = q.checks.map((c) => c.name);
+      const informedChecklistSource: "run" | "authored" | null = !batchArms.includes("informed")
+        ? null
+        : runNames.length > 0
+          ? "run"
+          : "authored";
+      const informedChecklist =
+        informedChecklistSource === "run"
+          ? runNames
+          : informedChecklistSource === "authored"
+            ? [
+                ...new Set([
+                  ...(validatorInfoRef.current?.checkNames ?? []),
+                  ...(driver ? (driverInfoRef.current?.checkNames ?? []) : []),
+                  ...(driver ? ["frontend: no uncaught client errors"] : []),
+                ]),
+              ]
+            : null;
+      if (batchArms.includes("informed") && !informedChecklist?.length) {
+        setRunError("Batch not started — the informed arm needs the graders' check names, and none were reported.");
+        return;
+      }
+
       const record = async (
         source: string,
         info: Omit<GraderRecord, "source" | "hash"> | null,
@@ -498,6 +532,8 @@ function App() {
         },
         gradeUI,
         arms: batchArms,
+        informedChecklist,
+        informedChecklistSource,
         validator: await record(script, validatorInfoRef.current),
         driver: driver ? await record(driver, driverInfoRef.current) : null,
         qualification: {
@@ -526,6 +562,7 @@ function App() {
         interactionPath: activePreset?.driverPath ?? "/",
         runs: batchRuns,
         arms: batchArms,
+        informedChecklist: informedChecklist ?? undefined,
         signal: controller.signal,
         onRunStart: (runIndex, arm) => {
           setBatchProgress({ run: runIndex, of: batchRuns, arm });
@@ -565,7 +602,7 @@ function App() {
   // otherwise the live attempts (single run, or the in-flight batch run).
   const selectedRun =
     selectedRunKey !== null ? batchResults.find((r) => runKey(r) === selectedRunKey) : undefined;
-  const pairedBatch = batchResults.some((r) => r.arm === "feedback") && batchResults.some((r) => r.arm === "spec-only");
+  const pairedBatch = new Set(batchResults.map((r) => r.arm)).size > 1;
   const displayAttempts = selectedRun ? selectedRun.attempts : attempts;
 
   return (
@@ -753,7 +790,7 @@ function App() {
                     disabled={running}
                     title="Healing: retries see the previous code and its captured error."
                     onClick={() => {
-                      if (runHealing && !runControl) return; // keep at least one arm
+                      if (runHealing && !runControl && !runInformed) return; // keep at least one arm
                       setRunHealing(!runHealing);
                     }}
                   >
@@ -766,11 +803,24 @@ function App() {
                     disabled={running}
                     title="Control: every attempt sees only the spec, as an independent fresh sample."
                     onClick={() => {
-                      if (runControl && !runHealing) return; // keep at least one arm
+                      if (runControl && !runHealing && !runInformed) return; // keep at least one arm
                       setRunControl(!runControl);
                     }}
                   >
                     Control (spec only)
+                  </button>
+                  <button
+                    type="button"
+                    className="toggle-chip"
+                    aria-pressed={runInformed}
+                    disabled={running}
+                    title="Informed: every attempt sees the spec plus the names of the grader's checks (no code, no errors). Separates what disclosing the requirements buys from what debugging adds."
+                    onClick={() => {
+                      if (runInformed && !runHealing && !runControl) return; // keep at least one arm
+                      setRunInformed(!runInformed);
+                    }}
+                  >
+                    Informed (spec + check names)
                   </button>
                 </div>
               </div>
@@ -793,7 +843,7 @@ function App() {
           <p className="app__done">
             Batch: run {batchProgress.run} / {batchProgress.of}
             {batchProgress.arm && batchArms.length > 1
-              ? ` (${batchProgress.arm === "feedback" ? "healing" : "control"})`
+              ? ` (${ARM_SHORT[batchProgress.arm].name})`
               : ""}
             …
           </p>
@@ -995,10 +1045,10 @@ function App() {
                 className={`run-chip run-chip--${
                   run.stoppedReason === "converged" ? "pass" : "fail"
                 }${selectedRunKey === runKey(run) ? " run-chip--active" : ""}`}
-                title={`${run.arm === "feedback" ? "healing" : "spec-only control"} · ${run.stoppedReason} · ${run.attempts.length} attempts`}
+                title={`${ARM_SHORT[run.arm].name} · ${run.stoppedReason} · ${run.attempts.length} attempts`}
               >
                 #{run.index}
-                {pairedBatch && (run.arm === "feedback" ? " H" : " C")}
+                {pairedBatch && ` ${ARM_SHORT[run.arm].letter}`}
               </button>
             ))}
           </div>
@@ -1014,7 +1064,7 @@ function App() {
               <span className="app__viewing">
                 {" "}
                 · run #{selectedRun.index}
-                {pairedBatch && ` (${selectedRun.arm === "feedback" ? "healing" : "control"})`}
+                {pairedBatch && ` (${ARM_SHORT[selectedRun.arm].name})`}
               </span>
             )}
           </h2>

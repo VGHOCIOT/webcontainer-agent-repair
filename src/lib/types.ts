@@ -71,12 +71,16 @@ export type StoppedReason =
 // distribution, not a single anecdote.
 export interface BatchRun {
   index: number;
-  // Which retry procedure produced this run: "feedback" = the healing loop,
-  // "spec-only" = the control (see RunAgentLoopOptions.feedback). A paired batch
-  // holds both, one of each per run index.
+  // Which retry procedure produced this run (see BatchArm). A multi-arm batch
+  // holds one run per arm for each run index.
   arm: BatchArm;
   attempts: Attempt[];
   stoppedReason: StoppedReason;
 }
 
-export type BatchArm = "feedback" | "spec-only";
+// "feedback" = the healing loop; "spec-only" = fresh samples seeing only the spec;
+// "informed" = fresh samples seeing the spec plus the grader's check names up
+// front (see RunAgentLoopOptions.checklist). spec-only vs informed isolates what
+// merely DISCLOSING the graders' requirements buys; informed vs feedback isolates
+// what debugging from the captured error adds beyond that.
+export type BatchArm = "feedback" | "spec-only" | "informed";

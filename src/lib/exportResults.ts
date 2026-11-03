@@ -1,4 +1,4 @@
-import { computeBatchSummary } from "./stats";
+import { ARM_ORDER, computeBatchSummary } from "./stats";
 import type { BatchArm, BatchRun, CheckLayer, FailureStage, StoppedReason } from "./types";
 
 // Reproducible, user-initiated export of a batch (the only way data leaves the
@@ -31,9 +31,16 @@ export interface BatchMeta {
   perturbations: { port: boolean; offline: boolean; fuzz: boolean };
   // Which arms this batch ran for every run index: "feedback" = the healing loop
   // (retries see the previous code + error), "spec-only" = the control (every
-  // attempt an independent fresh sample). Both = a paired batch, scored by these
+  // attempt an independent fresh sample), "informed" = fresh samples that also
+  // see the grader's check names up front. Both = a paired batch, scored by these
   // same graders.
   arms: BatchArm[];
+  // The check names the "informed" arm was shown (null when that arm didn't run).
+  informedChecklist: string[] | null;
+  // Where those names came from: "run" = emitted by the graders on the
+  // qualification reference run (exact); "authored" = the grader models' own
+  // best-effort lists (custom spec, unqualified). Don't pool across the two.
+  informedChecklistSource: "run" | "authored" | null;
   gradeUI: boolean;
   validator: GraderRecord;
   driver: GraderRecord | null;
@@ -127,7 +134,7 @@ export async function buildBatchExport(meta: BatchMeta, runs: BatchRun[]): Promi
     config: { ...config, specHash: await shortHash(meta.spec) },
     graders: { validator, driver },
     summaries: Object.fromEntries(
-      (["feedback", "spec-only"] as BatchArm[])
+      ARM_ORDER
         .filter((arm) => runs.some((r) => r.arm === arm))
         .map((arm) => [arm, computeBatchSummary(runs.filter((r) => r.arm === arm))]),
     ),

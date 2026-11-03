@@ -4,7 +4,7 @@ import type { Attempt, BatchArm, BatchRun } from "./types";
 export interface RunBatchOptions
   extends Omit<
     RunAgentLoopOptions,
-    "onAttempt" | "onPreviewUrl" | "keepServerAlive" | "feedback"
+    "onAttempt" | "onPreviewUrl" | "keepServerAlive" | "feedback" | "checklist"
   > {
   runs: number;
   // Which arms to run for every run index. Both arms (healing + spec-only
@@ -12,6 +12,9 @@ export interface RunBatchOptions
   // comparison between them comes out of a single invocation instead of
   // depending on two separately-run batches lining up.
   arms: BatchArm[];
+  // Grader check names shown to the "informed" arm (see RunAgentLoopOptions.checklist).
+  // Required when that arm is requested.
+  informedChecklist?: string[];
   onRunStart?: (runIndex: number, arm: BatchArm) => void;
   onAttempt?: (runIndex: number, arm: BatchArm, attempt: Attempt) => void;
   onRunComplete?: (run: BatchRun) => void;
@@ -31,12 +34,16 @@ export interface RunBatchOptions
 export async function runBatch({
   runs,
   arms,
+  informedChecklist,
   onRunStart,
   onAttempt,
   onRunComplete,
   signal,
   ...loopOptions
 }: RunBatchOptions): Promise<BatchRun[]> {
+  if (arms.includes("informed") && !informedChecklist?.length) {
+    throw new Error("The informed arm needs a grader checklist, and none was provided.");
+  }
   const results: BatchRun[] = [];
 
   for (let r = 1; r <= runs; r++) {
@@ -47,6 +54,7 @@ export async function runBatch({
       const { attempts, stoppedReason } = await runAgentLoop({
         ...loopOptions,
         feedback: arm === "feedback",
+        checklist: arm === "informed" ? informedChecklist : undefined,
         signal,
         keepServerAlive: false,
         onAttempt: (attempt) => onAttempt?.(r, arm, attempt),
