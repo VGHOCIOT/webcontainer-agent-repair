@@ -1,4 +1,4 @@
-import { ARM_ORDER, computeBatchSummary } from "./stats";
+import { ARM_ORDER, computeBatchSummary, computeSuspectChecks, type SuspectCheck } from "./stats";
 import type { BatchArm, BatchRun, CheckLayer, FailureStage, StoppedReason } from "./types";
 
 // Reproducible, user-initiated export of a batch (the only way data leaves the
@@ -85,6 +85,13 @@ export interface BatchExport {
   exportedAt: string;
   config: Omit<BatchMeta, "validator" | "driver"> & { specHash: string };
   graders: { validator: GraderRecord; driver: GraderRecord | null };
+  // Checks that failed in every attempt across all runs and arms: a likely grader
+  // defect or an unsatisfiable check. Present whether or not the graders were
+  // qualified; for a custom spec (qualification "no-reference") it's the only signal.
+  suspectChecks: SuspectCheck[];
+  // True when the graders passed a reference app and failed its known-bad variants.
+  // False for a custom spec, whose results are only as trustworthy as the graders.
+  gradersQualified: boolean;
   // One summary per arm that ran — never pooled across arms.
   summaries: Partial<Record<BatchArm, ReturnType<typeof computeBatchSummary>>>;
   runs: ExportedRun[];
@@ -133,6 +140,8 @@ export async function buildBatchExport(meta: BatchMeta, runs: BatchRun[]): Promi
     exportedAt: new Date().toISOString(),
     config: { ...config, specHash: await shortHash(meta.spec) },
     graders: { validator, driver },
+    suspectChecks: computeSuspectChecks(runs),
+    gradersQualified: meta.qualification.status === "qualified",
     summaries: Object.fromEntries(
       ARM_ORDER
         .filter((arm) => runs.some((r) => r.arm === arm))

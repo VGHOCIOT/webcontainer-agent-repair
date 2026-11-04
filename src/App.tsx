@@ -25,6 +25,9 @@ import {
   type Qualification,
 } from "./lib/qualify";
 import { BatchSummary } from "./components/BatchSummary";
+import { GraderEval } from "./components/GraderEval";
+import { GRADER_CORPUS } from "./lib/graderCorpus";
+import type { EvalSpec } from "./lib/graderEval";
 import {
   buildBatchExport,
   downloadJson,
@@ -57,6 +60,21 @@ const SPEC_PRESETS: {
   { name: "Task filter", spec: FILTER_SPEC, frontend: true, driverPath: "/" },
   { name: "Live search", spec: SEARCH_SPEC, frontend: true, driverPath: "/" },
 ];
+// Development tooling (the grader eval) only shows with ?dev in the URL, so the
+// demo page a viewer sees stays unchanged.
+const DEV_MODE = new URLSearchParams(window.location.search).has("dev");
+
+// Every spec the grader eval can author graders for: the presets plus the
+// robustness corpus (see graderCorpus.ts).
+const EVAL_SPECS: EvalSpec[] = [
+  ...SPEC_PRESETS.map((p) => ({
+    name: p.name,
+    spec: p.spec,
+    frontend: p.frontend === true,
+    driverPath: p.driverPath ?? "/",
+  })),
+  ...GRADER_CORPUS.map((c) => ({ name: c.name, spec: c.spec, frontend: true, driverPath: "/" })),
+];
 // Non-default port the PORT-honoring probe launches the app with (see envPort
 // in agentLoop). Anything other than the conventional 3000 fallback works.
 const PROBE_PORT = 4001;
@@ -77,7 +95,7 @@ function App() {
   // makes genuine bugs surface and heal.
   const [builderModel, setBuilderModel] = useState(DEFAULT_BUILDER_MODEL);
   const [validatorModel, setValidatorModel] = useState(DEFAULT_MODEL);
-  const [spec, setSpec] = useState(DEFAULT_SPEC);
+  const [spec, setSpec] = useState("");
   // Environment perturbations (disclosed, off by default so the base run is
   // unperturbed): PORT probe checks process.env.PORT is honored; offline install
   // checks the app pulled in no npm packages.
@@ -670,28 +688,34 @@ function App() {
 
       <section className="card">
         <h2 className="card__title">Spec</h2>
-        <div className="toggle-group" role="group" aria-label="Spec presets">
-          {SPEC_PRESETS.map((preset) => (
-            <button
-              key={preset.name}
-              type="button"
-              onClick={() => setSpec(preset.spec)}
-              disabled={running}
-              aria-pressed={spec === preset.spec}
-              className="toggle-chip"
-            >
-              {preset.name}
-            </button>
-          ))}
+        <label className="field">
+          <span>Describe the app you want built</span>
+          <textarea
+            className="spec-text"
+            value={spec}
+            onChange={(e) => setSpec(e.target.value)}
+            rows={8}
+            disabled={running}
+            placeholder="Write any small app in plain English — e.g. “A page with a text box and a button that adds each entry to a list, and a counter showing how many entries there are.” The agent builds it, runs it in the browser, and fixes what breaks."
+          />
+        </label>
+        <div className="spec-examples">
+          <span className="spec-examples__label">Or start from an example</span>
+          <div className="toggle-group" role="group" aria-label="Spec examples">
+            {SPEC_PRESETS.map((preset) => (
+              <button
+                key={preset.name}
+                type="button"
+                onClick={() => setSpec(preset.spec)}
+                disabled={running}
+                aria-pressed={spec === preset.spec}
+                className="toggle-chip"
+              >
+                {preset.name}
+              </button>
+            ))}
+          </div>
         </div>
-        <textarea
-          className="spec-text"
-          value={spec}
-          onChange={(e) => setSpec(e.target.value)}
-          rows={8}
-          disabled={running}
-          aria-label="Spec"
-        />
       </section>
 
       <details className="card card--collapsible">
@@ -747,6 +771,16 @@ function App() {
         </ul>
       </details>
 
+      {DEV_MODE && (
+        <GraderEval
+          apiKey={apiKey}
+          graderModel={validatorModel}
+          specs={EVAL_SPECS}
+          blocked={running || generatingValidator || generatingDriver}
+          onRunningChange={setRunning}
+        />
+      )}
+
       <section className="card">
         <h2 className="card__title">Run</h2>
         <div className="run-grid">
@@ -754,7 +788,7 @@ function App() {
             <h3 className="run-group__title">Single run</h3>
             <p className="run-group__hint">Build once and watch the attempts live.</p>
             <div className="run-group__controls">
-              <button onClick={handleStart} disabled={running} className="btn btn--primary">
+              <button onClick={handleStart} disabled={running || !spec.trim()} className="btn btn--primary">
                 {running ? "Running…" : "Build"}
               </button>
             </div>
@@ -824,7 +858,7 @@ function App() {
                   </button>
                 </div>
               </div>
-              <button onClick={handleBatch} disabled={running} className="btn btn--secondary">
+              <button onClick={handleBatch} disabled={running || !spec.trim()} className="btn btn--secondary">
                 Run batch
               </button>
             </div>
@@ -1052,6 +1086,14 @@ function App() {
               </button>
             ))}
           </div>
+          {batchMeta?.qualification.status === "no-reference" && (
+            <div className="app__regrade-result app__regrade-result--fail">
+              <strong>Unqualified graders (custom spec):</strong> there is no reference app to qualify them against,
+              so every number here is only as trustworthy as the model-written graders. In our grader eval, fewer than half of
+              freshly authored graders qualified on the first try. Treat convergence results for a custom spec as indicative, and
+              read any check that always fails.
+            </div>
+          )}
           <BatchSummary runs={batchResults} />
         </section>
       )}

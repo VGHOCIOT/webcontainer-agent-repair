@@ -32,6 +32,8 @@ Derive checks that pin down correctness thoroughly: happy path, boundaries (firs
 
 Grade what the server SERVES, never how the code is written. For an HTML page, check only wire-level facts: status, content type, and that the elements the spec names (by id/tag/text) are present in the markup. NEVER grep the page's inline script or CSS for implementation details — no checks for a particular function, API call, event handler, class name, or style spelling (e.g. do not assert the script contains "fetch" or "line-through"). A correct app can implement those many ways, and a string match fails correct code and forces the generator to churn. Client-side behavior and styling (what happens on click, what renders after load) are graded separately by a browser-based interaction driver, so leave them out entirely. That includes UI STATE: never assert, in the served markup, an attribute or class that marks a control as active/selected/pressed/checked (aria-pressed, aria-selected, "active" classes), or the text of a counter or status element. The spec may describe that state as something the page's script sets after load, so its absence from the raw HTML is not a defect; check only that the named elements exist.
 
+Only assert markup the spec says the SERVED page contains. Anything the page's script produces after load is not wire-level, so never check it in the raw HTML: glyphs or labels the script draws (stars, icons, counters), content it swaps in or out (tab or accordion panels, results lists, messages), and anything rendered from fetched data. Do not invent names: if the spec gives no id or class for an element, never require one (no "progress" id, no "status" class); locate it by tag or by text the spec quotes, or skip the check. When you are unsure whether something is in the served HTML or added by script, leave it out; the browser driver covers it.
+
 Worked example — for the spec "GET /items?page&limit paginated over 47 in-memory items, default page 1 limit 10, positive integers only (else 400), shape { page, limit, total, items }, past-the-last-page returns empty items with 200":
 
 \`\`\`json
@@ -119,7 +121,7 @@ export async function generateValidator(
 
   const response = await client.messages.create({
     model,
-    max_tokens: 8000,
+    max_tokens: 16000,
     system: VALIDATOR_SYSTEM_PROMPT,
     messages: [{ role: "user", content: `Spec:\n\n${spec}` }],
   });
