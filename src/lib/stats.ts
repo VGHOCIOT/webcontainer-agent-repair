@@ -1,4 +1,4 @@
-import type { FailureStage, Attempt, BatchArm, BatchRun, StoppedReason } from "./types";
+import type { FailureStage, Attempt, BatchArm, BatchRun, CheckLayer, StoppedReason } from "./types";
 import { last } from "./utils"
 
 export type CellState = "pass" | "fail" | "absent";
@@ -333,4 +333,38 @@ export function computeArmComparison(runs: BatchRun[]): ArmStats[] {
         });
     }
     return out;
+}
+
+// A check that failed in EVERY attempt it appeared in, across every run and arm
+// (including the independent fresh-sample arms), is as likely a defect in the grader
+// as a bug no build could fix: two custom-spec pilots ended exactly like this, with a
+// correct app failing the same check four times. It is a flag to go read the check,
+// not a verdict. Needs a few attempts to mean anything.
+export const SUSPECT_MIN_ATTEMPTS = 3;
+
+export interface SuspectCheck {
+  name: string;
+  layer?: CheckLayer;
+  attempts: number;
+  runs: number;
+}
+
+export function computeSuspectChecks(runs: BatchRun[]): SuspectCheck[] {
+  const seen = new Map<string, { layer?: CheckLayer; total: number; failed: number; runs: Set<string> }>();
+  for (const run of runs) {
+    for (const attempt of run.attempts) {
+      for (const c of attempt.validation?.checks ?? []) {
+        const e = seen.get(c.name) ?? { layer: c.layer, total: 0, failed: 0, runs: new Set<string>() };
+        e.total += 1;
+        if (!c.pass) {
+          e.failed += 1;
+          e.runs.add(`${run.arm}#${run.index}`);
+        }
+        seen.set(c.name, e);
+      }
+    }
+  }
+  return [...seen.entries()]
+    .filter(([, e]) => e.total >= SUSPECT_MIN_ATTEMPTS && e.failed === e.total)
+    .map(([name, e]) => ({ name, layer: e.layer, attempts: e.total, runs: e.runs.size }));
 }

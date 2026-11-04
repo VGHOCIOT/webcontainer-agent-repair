@@ -1,5 +1,5 @@
 import { runAgentLoop } from "./agentLoop";
-import { mutantsFor, referenceFor } from "./referenceApps";
+import { mutantsFor, referenceFor, variantsFor } from "./referenceApps";
 import type { CheckResult, GeneratedFile } from "./types";
 
 // Grader qualification. A grader authored once by a model can simply be wrong,
@@ -95,7 +95,34 @@ export async function qualifyGraders(opts: {
     };
   }
 
-  // The reference passed. Now the graders must catch each known-broken variant.
+  // The reference passed. Other correct builds of the same spec (different DOM
+  // strategy) must pass too, or the graders are overfit to the reference's shape.
+  for (const variant of variantsFor(opts.spec)) {
+    const v = await run(variant.files);
+    if (v.stoppedReason === "converged") continue;
+    const vChecks = v.attempt?.validation?.checks ?? [];
+    const vFailing = vChecks.filter((c) => !c.pass);
+    if (v.attempt?.failureStage === "validation" || vFailing.length > 0) {
+      return {
+        status: "rejected",
+        checks,
+        failing: vFailing,
+        missedMutants: [],
+        message: `The graders failed a correct alternative build ("${variant.name}") on ${vFailing.length} check(s): ${vFailing
+          .map((c) => c.name)
+          .join("; ")}. The grader is overfit to one DOM structure — regenerate it.`,
+      };
+    }
+    return {
+      status: "error",
+      checks,
+      failing: [],
+      missedMutants: [],
+      message: `The known-good variant "${variant.name}" did not run (${v.attempt?.error ?? v.stoppedReason}). This is a fixture bug, not a grader verdict.`,
+    };
+  }
+
+  // Now the graders must catch each known-broken variant.
   const mutants = mutantsFor(opts.spec);
   const missed: string[] = [];
   for (const mutant of mutants) {

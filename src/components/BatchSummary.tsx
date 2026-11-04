@@ -1,5 +1,5 @@
 import type { BatchArm, BatchRun } from "../lib/types";
-import { ARM_ORDER, computeArmComparison, computeBatchSummary } from "../lib/stats";
+import { ARM_ORDER, computeArmComparison, computeBatchSummary, computeSuspectChecks } from "../lib/stats";
 
 const STAGE_LABEL: Record<string, string> = {
   generation: "Generation",
@@ -112,6 +112,27 @@ function ArmComparison({ runs }: { runs: BatchRun[] }) {
   );
 }
 
+// Checks that failed in every attempt they appeared in — see computeSuspectChecks.
+function SuspectChecks({ runs }: { runs: BatchRun[] }) {
+  const suspects = computeSuspectChecks(runs);
+  if (suspects.length === 0) return null;
+  return (
+    <div className="app__regrade-result app__regrade-result--fail">
+      <strong>Possible grader defect:</strong> {suspects.length === 1 ? "this check" : "these checks"} failed in every
+      attempt it ran in, across all runs and arms. Either no build satisfied it or the check itself is wrong, so read
+      it against the spec and the generated code before trusting this batch.
+      <ul>
+        {suspects.map((c) => (
+          <li key={c.name}>
+            <code>{c.name}</code> — failed {c.attempts}/{c.attempts} attempts in {c.runs} run{c.runs === 1 ? "" : "s"}
+            {c.layer ? ` (${c.layer} layer)` : ""}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function BatchSummary({ runs }: { runs: BatchRun[] }) {
   if (runs.length === 0) return null;
   const arms = ARM_ORDER.filter((a) =>
@@ -120,6 +141,7 @@ export function BatchSummary({ runs }: { runs: BatchRun[] }) {
   if (arms.length < 2) {
     return (
       <>
+        <SuspectChecks runs={runs} />
         {arms.length === 1 && arms[0] === "spec-only" && (
           <p className="batch-summary__totals">Control arm only: retries saw the spec, not errors.</p>
         )}
@@ -134,6 +156,7 @@ export function BatchSummary({ runs }: { runs: BatchRun[] }) {
   }
   return (
     <>
+      <SuspectChecks runs={runs} />
       <ArmComparison runs={runs} />
       {arms.map((arm) => (
         <details key={arm} className="batch-arm">

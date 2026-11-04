@@ -1,5 +1,7 @@
 import { DEFAULT_SPEC, FRONTEND_SPEC } from "./spec";
 import { TASKS_SPEC, FILTER_SPEC, SEARCH_SPEC } from "./interactive";
+import { appFiles, restFiles, swapLine, type NamedFiles } from "./fixtureKit";
+import { GRADER_CORPUS } from "./graderCorpus";
 import type { GeneratedFile } from "./types";
 
 // Hand-written, known-good implementations of each preset spec, used ONLY to
@@ -15,50 +17,6 @@ import type { GeneratedFile } from "./types";
 // shown to the builder model.
 //
 // Client scripts avoid template literals and backticks so they embed here.
-
-const PACKAGE_JSON: GeneratedFile = {
-  path: "package.json",
-  contents: JSON.stringify(
-    { name: "reference-app", version: "1.0.0", scripts: { start: "node index.js" } },
-    null,
-    2,
-  ),
-};
-
-function page(body: string, script: string): string {
-  return (
-    '<!doctype html><html><head><meta charset="utf-8"><title>App</title></head><body>' +
-    body +
-    "<script>" +
-    script +
-    "</script></body></html>"
-  );
-}
-
-// A server whose routes are: "/" -> html, plus whatever `extraRoutes` handles.
-// `extraRoutes(url, res)` returns true if it handled the request.
-function server(html: string, extraRoutes: string): string {
-  return [
-    'const http = require("http");',
-    "const HTML = " + JSON.stringify(html) + ";",
-    "function json(res, status, body) {",
-    '  res.writeHead(status, { "Content-Type": "application/json" });',
-    "  res.end(JSON.stringify(body));",
-    "}",
-    "const server = http.createServer((req, res) => {",
-    '  const url = new URL(req.url, "http://localhost");',
-    '  if (req.method === "GET" && url.pathname === "/") {',
-    '    res.writeHead(200, { "Content-Type": "text/html" });',
-    "    return res.end(HTML);",
-    "  }",
-    extraRoutes,
-    '  res.writeHead(404, { "Content-Type": "text/plain" });',
-    '  res.end("Not found");',
-    "});",
-    "const PORT = process.env.PORT || 3000;",
-    'server.listen(PORT, () => console.log("Server ready"));',
-  ].join("\n");
-}
 
 const REST_LINES = [
   'const http = require("http");',
@@ -227,22 +185,6 @@ const SEARCH_SCRIPT = [
     'run("");',
 ];
 
-function files(index: string): GeneratedFile[] {
-  return [PACKAGE_JSON, { path: "index.js", contents: index }];
-}
-
-// Replace the single line containing `needle` (the line must exist exactly once,
-// so a mutant can't silently stop mutating if the reference is edited).
-function swapLine(lines: string[], needle: string, replacement: string): string[] {
-  const hits = lines.filter((l) => l.includes(needle)).length;
-  if (hits !== 1) throw new Error(`referenceApps: expected exactly one line containing ${JSON.stringify(needle)}, found ${hits}`);
-  return lines.map((l) => (l.includes(needle) ? replacement : l));
-}
-
-const restFiles = (lines: string[]) => files(lines.join("\n"));
-const appFiles = (body: string, script: string[], api: string) =>
-  files(server(page(body, script.join("\n")), api));
-
 const REFERENCES = new Map<string, GeneratedFile[]>([
   [DEFAULT_SPEC, restFiles(REST_LINES)],
   [FRONTEND_SPEC, appFiles(FRONTEND_BODY, FRONTEND_SCRIPT, TASKS_API)],
@@ -261,10 +203,7 @@ export function referenceFor(spec: string): GeneratedFile[] | null {
 // one is too lenient to be trusted (it would wave through a builder's same bug).
 // Each mutant violates a line the spec states outright — never an unspecified
 // detail — so a correct grader has no excuse for missing it.
-export interface Mutant {
-  name: string;
-  files: GeneratedFile[];
-}
+export type Mutant = NamedFiles;
 
 const TOGGLE_HANDLER = 'cb.addEventListener("change", function () { t.done = cb.checked; render(); });';
 const COUNT_LINE = 'document.getElementById("active-count").textContent';
@@ -376,4 +315,21 @@ const MUTANTS = new Map<string, Mutant[]>([
 /** Known-bad variants of a preset's reference app; empty for a custom spec. */
 export function mutantsFor(spec: string): Mutant[] {
   return MUTANTS.get(spec) ?? [];
+}
+
+// Known-GOOD alternatives: other correct apps for the same spec built a different
+// way (hidden vs removed from the DOM, ids vs none, different markup). The graders
+// must PASS each, or they're overfit to the reference's structure and would fail a
+// builder's equally correct app. Only the corpus specs have them.
+const VARIANTS = new Map<string, NamedFiles[]>();
+
+for (const entry of GRADER_CORPUS) {
+  REFERENCES.set(entry.spec, entry.reference);
+  MUTANTS.set(entry.spec, entry.mutants);
+  VARIANTS.set(entry.spec, entry.variants);
+}
+
+/** Known-good, differently built apps for a spec; empty when it has none. */
+export function variantsFor(spec: string): NamedFiles[] {
+  return VARIANTS.get(spec) ?? [];
 }
