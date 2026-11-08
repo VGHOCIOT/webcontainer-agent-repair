@@ -11,6 +11,7 @@ A self-healing, backend-less "micro-SaaS builder" demo: an agent writes code for
 - `npm run dev` — Vite dev server (the app runs entirely in the browser; needs an Anthropic API key entered in the UI or via `VITE_ANTHROPIC_API_KEY` in `.env`).
 - `npm run build` — `tsc -b && vite build` (full typecheck + production bundle).
 - `npm run lint` — oxlint (config in `.oxlintrc.json`).
+- `node scripts/analyze.mjs results/*.json [--json]` — offline summary of one or more batch exports (per-arm convergence with Wilson intervals, arm gaps with a separable-or-not verdict, cost, first-failing checks by layer, warnings). Design and validity rules for the experiment live in `docs/EXPERIMENT.md`.
 - `npx tsc -p tsconfig.app.json --noEmit` — typecheck only, without building. (A bare `npx tsc --noEmit` checks nothing: the root tsconfig has no files, only project references, so it exits 0 regardless. `npm run build` / `tsc -b` do check.)
 
 There is **no test runner** in this project — no unit/integration test framework is set up, so there is no single-test command. "Verification" here means running the app and driving the agent loop end-to-end in the browser (see the design constraints below on why the loop's behavior, not a test suite, is the signal). Don't assume a test command exists; if you add one, update this file.
